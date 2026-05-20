@@ -11,8 +11,7 @@ This repository now contains a minimal, installable Chrome extension.
 1. Open `chrome://extensions/`
 2. Enable **Developer mode** (top-right)
 3. Click **Load unpacked**
-4. Select this folder:
-   `/home/runner/work/webmcp-annotator/webmcp-annotator`
+4. Select the repository root folder (the folder that contains `manifest.json`)
 5. Pin/open the extension and click **Annotate H1**
 
 ### What it does
