@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "WebMCP Annotator",
+  "description": "Annotate page heading for WebMCP workflows.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_title": "WebMCP Annotator",
+    "default_popup": "popup.html"
+  }
+}
