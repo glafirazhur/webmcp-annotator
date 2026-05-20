@@ -1,25 +1,37 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebMCP Annotator</title>
-    <style>
-      body {
-        margin: 0;
-        padding: 12px;
-        font-family: Arial, sans-serif;
-      }
 
-      button {
-        width: 100%;
-        padding: 8px 10px;
-        cursor: pointer;
-      }
-    </style>
-  </head>
-  <body>
-    <button id="annotate-h1" type="button">Annotate H1</button>
-    <script src="popup.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebMCP Annotator</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+        </svg>
+      </div>
+      <div class="header-text">
+        <h1>WebMCP Annotator</h1>
+        <p>Annotate content for agent workflows</p>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <button id="annotate-content" type="button">
+      Annotate Content
+    </button>
+
+    <div id="status" class="status-box"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+
 </html>
