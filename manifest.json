@@ -1,14 +1,32 @@
 {
   "manifest_version": 3,
   "name": "WebMCP Annotator",
-  "description": "Annotate page content for WebMCP workflows.",
-  "version": "0.1.0",
+  "description": "Wrapper-first annotation flow for WebMCP tool registration.",
+  "version": "0.2.0",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage",
+    "tabs"
   ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "WebMCP Annotator",
     "default_popup": "popup.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["widget.css"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
 }
