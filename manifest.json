@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WebMCP Annotator",
-  "description": "Wrapper-first annotation flow for WebMCP tool registration.",
-  "version": "0.2.0",
+  "description": "Select a wrapper on the page and send it to AI for annotation.",
+  "version": "0.3.0",
   "permissions": [
     "activeTab",
     "scripting",
