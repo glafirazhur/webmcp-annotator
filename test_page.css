@@ -78,7 +78,7 @@ input[type="submit"]:hover {
 }
 
 /* Highlight styles applied when WebMCP attributes are present */
-[toolname] {
+/*[toolname] {
   outline: 3px solid #10b981 !important;
   outline-offset: 4px;
   position: relative;
@@ -99,4 +99,4 @@ input[type="submit"]:hover {
 
 [toolparamtitle] {
   border: 2px solid #8b5cf6 !important;
-}
+}*/

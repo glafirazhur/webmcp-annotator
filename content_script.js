@@ -123,7 +123,7 @@ function buildCandidate(el, kind) {
   return node;
 }
 
-function buildDomSummary(wrapperEl, toolName) {
+function buildDomSummary(wrapperEl) {
   const controls = [];
   const textBlocks = [];
 
@@ -154,7 +154,6 @@ function buildDomSummary(wrapperEl, toolName) {
   }
 
   return {
-    toolName,
     containerXPath: getXPath(wrapperEl),
     candidates: [...controls, ...textBlocks]
   };
@@ -173,6 +172,10 @@ function getAiSchema() {
             type: 'STRING',
             description: 'The exact XPath of the selected wrapper container.'
           },
+          contentType: {
+            type: 'STRING',
+            description: 'The suggested type of the presented content based on the list of elements and a screenshot, e.g., "product card", "article", "profile", "listing item", "gallery", etc. This is a hint for WebMCP toolname generation and can be used in the future for auto-categorization of tools.'
+          },
           toolname: {
             type: 'STRING',
             description: 'The semantic name of the WebMCP tool (e.g., "add-to-cart"). MUST be written in the exact same language as the webpage text.'
@@ -182,7 +185,7 @@ function getAiSchema() {
             description: 'Detailed explanation of what the tool does. MUST be written in the exact same language as the webpage text.'
           }
         },
-        required: ['xpath', 'toolname', 'tooldescription']
+        required: ['xpath', 'contentType', 'toolname', 'tooldescription']
       },
       elements: {
         type: 'ARRAY',
@@ -202,7 +205,7 @@ function getAiSchema() {
               type: 'STRING',
               description: 'Explanation of what this parameter controls. MUST be in the exact same language as the webpage.'
             },
-            options: {
+            /*options: {
               type: 'ARRAY',
               description: 'If the element is a select dropdown, radio group, or variant picker, list ALL available options here. Leave empty for text/number inputs.',
               items: {
@@ -219,7 +222,7 @@ function getAiSchema() {
                 },
                 required: ['value']
               }
-            }
+            }*/
           },
           required: ['xpath', 'toolparamtitle', 'toolparamdescription']
         }
@@ -318,8 +321,7 @@ async function callAi({ screenshot, payload }) {
               'Return only confident fields. At most one element per fieldId.',
               '',
               '# CRITICAL RULES FOR OPTIONS AND FORM FIELDS:',
-              '1. Include ALL interactive form options, product variants, and calculation inputs inside the container.',
-              '2. If an element has multiple choices (like selects or radio groups), populate the "options" array.',
+              'Include ALL interactive form options, product variants, and calculation inputs inside the container.',              
               '',
               '# VISUAL GROUNDING FOR UNLABELED INPUTS (UNIVERSAL):',
               '1. Some critical input fields may lack explicit text labels in the JSON candidates list (they might only have a default numeric value or placeholder like "1" or "0").',
@@ -407,7 +409,6 @@ let widgetResult = null;
 
 let widgetPickBtn = null;
 let widgetRunBtn = null;
-let widgetToolInput = null;
 let dragState = null;
 
 function ensureWidget() {
@@ -432,23 +433,15 @@ function ensureWidget() {
 
   header.appendChild(title);
   header.appendChild(dragHint);
-
-  const toolWrap = document.createElement('div');
-  toolWrap.className = 'webmcp-tool-wrap';
-
-  const toolLabel = document.createElement('label');
-  toolLabel.textContent = 'Tool name';
-  toolLabel.className = 'webmcp-label';
-
-  widgetToolInput = document.createElement('input');
-  widgetToolInput.type = 'text';
-  widgetToolInput.placeholder = 'e.g. add-to-cart';
-  widgetToolInput.className = 'webmcp-input';
-  widgetToolInput.required = true;
-  widgetToolInput.setAttribute('aria-required', 'true');
-
-  toolWrap.appendChild(toolLabel);
-  toolWrap.appendChild(widgetToolInput);
+  
+  const widgetInstructions = document.createElement('div');
+  widgetInstructions.className = 'webmcp-widget-instructions';
+  widgetInstructions.innerHTML = '<p>This widget annotates your content for AI Agents following the WebMCP standard.</p>' +
+    '<ol>' +
+    '<li>Click "Pick Target" and select a wrapper on the page.</li>' +
+    '<li>Review the prepared screenshot and payload.</li>' +
+    '<li>Click "Run AI" to get annotation suggestions.</li>' +
+    '</ol>';
 
   const actions = document.createElement('div');
   actions.className = 'webmcp-actions';
@@ -514,7 +507,7 @@ function ensureWidget() {
 
   widgetRoot.append(
     header,
-    toolWrap,
+    widgetInstructions,
     actions,
     widgetStatusLine,
     widgetSelection,
@@ -578,13 +571,6 @@ function ensureWidget() {
 
   widgetPickBtn.addEventListener('click', () => {
     clearStatusLine();
-
-    if (!hasToolName()) {
-      showStatusLine('Tool name is required before picking a target.');
-      widgetToolInput?.focus();
-      return;
-    }
-
     startPicker();
   });
 
@@ -593,11 +579,6 @@ function ensureWidget() {
     runAiAnalysis().catch((err) => {
       showStatusLine(`AI failed: ${err.message}`);
     });
-  });
-
-  widgetToolInput.addEventListener('input', () => {
-    clearStatusLine();
-    updateRunBtn();
   });
 
   updateSelectionText();
@@ -630,14 +611,6 @@ function clearStatusLine() {
   if (!widgetStatusLine) return;
   widgetStatusLine.textContent = '';
   widgetStatusLine.classList.add('visually-hidden');
-}
-
-function getToolNameValue() {
-  return (widgetToolInput?.value || '').trim();
-}
-
-function hasToolName() {
-  return Boolean(getToolNameValue());
 }
 
 function setPreparedScreenshot(screenshot) {
@@ -690,10 +663,9 @@ function updateSelectionText() {
 function updateRunBtn() {
   if (!widgetRunBtn || !widgetPickBtn) return;
 
-  const toolReady = hasToolName();
-  const readyToRun = Boolean(toolReady && selectedWrapperEl && lastScreenshot && lastDomPayload && !aiRunning);
+  const readyToRun = Boolean(selectedWrapperEl && lastScreenshot && lastDomPayload && !aiRunning);
 
-  widgetPickBtn.disabled = !toolReady || aiRunning;
+  widgetPickBtn.disabled = aiRunning;
   widgetPickBtn.classList.toggle('is-disabled', widgetPickBtn.disabled);
 
   widgetRunBtn.disabled = !readyToRun;
@@ -804,13 +776,7 @@ function handlePickerKeydown(e) {
 
 function startPicker() {
   ensureWidget();
-
-  if (!hasToolName()) {
-    showStatusLine('Tool name is required before picking a target.');
-    widgetToolInput?.focus();
-    return;
-  }
-
+  
   pickerActive = true;
   document.addEventListener('mousemove', handlePickerHover, true);
   document.addEventListener('click', handlePickerClick, true);
@@ -840,9 +806,8 @@ function stopPicker() {
 
 async function captureAfterPick() {
   try {
-    const toolName = getToolNameValue();
 
-    lastDomPayload = buildDomSummary(selectedWrapperEl, toolName);
+    lastDomPayload = buildDomSummary(selectedWrapperEl);
     setPreparedPayload(lastDomPayload);
 
     if (widgetRoot) widgetRoot.classList.add('webmcp-hidden');
@@ -886,15 +851,6 @@ async function captureAfterPick() {
 
 async function runAiAnalysis() {
   if (aiRunning || !lastScreenshot || !lastDomPayload) return;
-
-  const toolName = getToolNameValue();
-  if (!toolName) {
-    showStatusLine('Tool name is required.');
-    widgetToolInput?.focus();
-    return;
-  }
-
-  lastDomPayload.toolName = toolName;
 
   aiRunning = true;
   setResultText('');
