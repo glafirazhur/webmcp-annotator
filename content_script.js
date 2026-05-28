@@ -2,7 +2,9 @@
  * @fileoverview WebMCP content script — picker, DOM summary builder, AI call, result display.
  */
 
+
 // ─── XPath ───────────────────────────────────────────────────────────────────
+
 
 function getXPath(el) {
   if (!(el instanceof Element)) return null;
@@ -26,7 +28,9 @@ function getXPath(el) {
   return '/' + parts.join('/');
 }
 
+
 // ─── DOM summary ─────────────────────────────────────────────────────────────
+
 
 const CONTROL_TAGS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'LINK', 'META', 'BR', 'HR', 'IMG']);
@@ -36,14 +40,17 @@ const TEXT_TAGS = new Set([
   'SUMMARY', 'FIGCAPTION', 'BLOCKQUOTE', 'STRONG', 'EM', 'A'
 ]);
 
+
 function collapseWS(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
+
 
 function truncate(text, max) {
   const s = collapseWS(text);
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
+
 
 function isHidden(el) {
   if (el.hidden) return true;
@@ -51,9 +58,11 @@ function isHidden(el) {
   return s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
 }
 
+
 function isClickableLink(el) {
   return el.tagName === 'A' && (Boolean(el.getAttribute('href')) || el.getAttribute('role') === 'button');
 }
+
 
 function isCustomControl(el) {
   const role = (el.getAttribute('role') || '').toLowerCase();
@@ -72,6 +81,7 @@ function isCustomControl(el) {
 
   return false;
 }
+
 
 function getLabels(control) {
   const out = [];
@@ -92,6 +102,7 @@ function getLabels(control) {
 
   return out;
 }
+
 
 function buildCandidate(el, kind) {
   const node = {
@@ -122,6 +133,7 @@ function buildCandidate(el, kind) {
 
   return node;
 }
+
 
 function buildDomSummary(wrapperEl) {
   const controls = [];
@@ -159,7 +171,9 @@ function buildDomSummary(wrapperEl) {
   };
 }
 
+
 // ─── AI ──────────────────────────────────────────────────────────────────────
+
 
 function getAiSchema() {
   return {
@@ -232,6 +246,7 @@ function getAiSchema() {
   };
 }
 
+
 function parseAiResponse(payload) {
   const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
@@ -246,6 +261,7 @@ function parseAiResponse(payload) {
 
   return parsed;
 }
+
 
 async function getAiSettings() {
   const defaults = { settings_model: 'gemini-3.5-flash', settings_api_key: '' };
@@ -264,9 +280,11 @@ async function getAiSettings() {
   });
 }
 
+
 function sanitizeBase64Image(data) {
   return String(data || '').replace(/^data:[^,]+,/, '').trim();
 }
+
 
 async function readGeminiError(response) {
   try {
@@ -288,6 +306,7 @@ async function readGeminiError(response) {
     return `AI API ${response.status}: request failed`;
   }
 }
+
 
 async function callAi({ screenshot, payload }) {
   const { settings_api_key: apiKey, settings_model: rawModel } = await getAiSettings();
@@ -321,7 +340,7 @@ async function callAi({ screenshot, payload }) {
               'Return only confident fields. At most one element per fieldId.',
               '',
               '# CRITICAL RULES FOR OPTIONS AND FORM FIELDS:',
-              'Include ALL interactive form options, product variants, and calculation inputs inside the container.',              
+              'Include ALL interactive form options, product variants, and calculation inputs inside the container.',
               '',
               '# VISUAL GROUNDING FOR UNLABELED INPUTS (UNIVERSAL):',
               '1. Some critical input fields may lack explicit text labels in the JSON candidates list (they might only have a default numeric value or placeholder like "1" or "0").',
@@ -375,7 +394,9 @@ async function callAi({ screenshot, payload }) {
   return parseAiResponse(await response.json());
 }
 
+
 // ─── State ───────────────────────────────────────────────────────────────────
+
 
 const IS_TOP_WINDOW = window === window.top;
 
@@ -391,8 +412,11 @@ let selectedWrapperRect = null;
 let lastScreenshot = null;
 let lastDomPayload = null;
 let aiRunning = false;
+let captureRunning = false;
+
 
 // ─── Widget ──────────────────────────────────────────────────────────────────
+
 
 let widgetRoot = null;
 let widgetStatusLine = null;
@@ -409,7 +433,10 @@ let widgetResult = null;
 
 let widgetPickBtn = null;
 let widgetRunBtn = null;
+let widgetClearBtn = null;
+
 let dragState = null;
+
 
 function ensureWidget() {
   if (!IS_TOP_WINDOW) return;
@@ -431,12 +458,21 @@ function ensureWidget() {
   dragHint.textContent = 'Drag';
   dragHint.className = 'webmcp-drag-hint';
 
+  widgetClearBtn = document.createElement('button');
+  widgetClearBtn.type = 'button';
+  widgetClearBtn.textContent = 'Clear';
+  widgetClearBtn.className = 'webmcp-btn webmcp-btn-clear';
+  widgetClearBtn.disabled = true;
+ 
+
   header.appendChild(title);
+  header.appendChild(widgetClearBtn);
   header.appendChild(dragHint);
-  
+
   const widgetInstructions = document.createElement('div');
   widgetInstructions.className = 'webmcp-widget-instructions';
-  widgetInstructions.innerHTML = '<p>This widget annotates your content for AI Agents following the WebMCP standard.</p>' +
+  widgetInstructions.innerHTML =
+    '<p>This widget annotates your content for AI Agents following the WebMCP standard.</p>' +
     '<ol>' +
     '<li>Click "Pick Target" and select a wrapper on the page.</li>' +
     '<li>Review the prepared screenshot and payload.</li>' +
@@ -581,12 +617,39 @@ function ensureWidget() {
     });
   });
 
+  widgetClearBtn.addEventListener('click', () => {
+    resetWidgetState();
+  });
+
   updateSelectionText();
   setPreparedScreenshot(null);
   setPreparedPayload(null);
   setResultText('');
-  updateRunBtn();
+  updateActionButtons();
 }
+
+
+function resetWidgetState() {
+  if (aiRunning || captureRunning) return;
+
+  stopPicker();
+
+  selectedWrapperEl = null;
+  selectedWrapperXPath = null;
+  selectedWrapperRect = null;
+
+  lastScreenshot = null;
+  lastDomPayload = null;
+  widgetClearBtn.disabled = true;
+
+  clearStatusLine();
+  setPreparedScreenshot(null);
+  setPreparedPayload(null);
+  setResultText('');
+  updateSelectionText();
+  updateActionButtons();
+}
+
 
 function setWidgetPos(left, top) {
   if (!widgetRoot) return;
@@ -601,17 +664,20 @@ function setWidgetPos(left, top) {
   widgetRoot.style.bottom = 'auto';
 }
 
+
 function showStatusLine(text) {
   if (!widgetStatusLine) return;
   widgetStatusLine.textContent = text || '';
   widgetStatusLine.classList.toggle('visually-hidden', !text);
 }
 
+
 function clearStatusLine() {
   if (!widgetStatusLine) return;
   widgetStatusLine.textContent = '';
   widgetStatusLine.classList.add('visually-hidden');
 }
+
 
 function setPreparedScreenshot(screenshot) {
   if (!widgetScreenshotSection || !widgetScreenshotImg) return;
@@ -626,6 +692,7 @@ function setPreparedScreenshot(screenshot) {
   widgetScreenshotSection.classList.remove('webmcp-hidden');
 }
 
+
 function setPreparedPayload(payload) {
   if (!widgetPayloadSection || !widgetPreparedPayload) return;
 
@@ -638,6 +705,7 @@ function setPreparedPayload(payload) {
     widgetPayloadSection.classList.add('webmcp-hidden');
   }
 }
+
 
 function setResultText(text) {
   if (!widgetResultSection || !widgetResult) return;
@@ -652,6 +720,7 @@ function setResultText(text) {
   }
 }
 
+
 function updateSelectionText() {
   if (!widgetSelection) return;
 
@@ -660,19 +729,24 @@ function updateSelectionText() {
     : 'Selection: none';
 }
 
-function updateRunBtn() {
+
+
+function updateActionButtons() {
   if (!widgetRunBtn || !widgetPickBtn) return;
 
-  const readyToRun = Boolean(selectedWrapperEl && lastScreenshot && lastDomPayload && !aiRunning);
+  const busy = aiRunning || captureRunning;
+  const readyToRun = Boolean(selectedWrapperEl && lastScreenshot && lastDomPayload && !busy && !pickerActive);
 
-  widgetPickBtn.disabled = aiRunning;
+  widgetPickBtn.disabled = busy || pickerActive;
   widgetPickBtn.classList.toggle('is-disabled', widgetPickBtn.disabled);
 
   widgetRunBtn.disabled = !readyToRun;
-  widgetRunBtn.classList.toggle('is-disabled', !readyToRun);
+  widgetRunBtn.classList.toggle('is-disabled', widgetRunBtn.disabled);
 }
 
+
 // ─── Picker ──────────────────────────────────────────────────────────────────
+
 
 function createPickerOverlay() {
   if (pickerOverlay) return;
@@ -688,6 +762,7 @@ function createPickerOverlay() {
   pickerOverlay.appendChild(pickerLabel);
   document.body.appendChild(pickerOverlay);
 }
+
 
 function positionOverlay(el) {
   if (!pickerOverlay) return;
@@ -705,6 +780,7 @@ function positionOverlay(el) {
   }
 }
 
+
 function resolvePickerTarget(e) {
   const stack = typeof document.elementsFromPoint === 'function'
     ? document.elementsFromPoint(e.clientX, e.clientY)
@@ -717,6 +793,7 @@ function resolvePickerTarget(e) {
     !['SCRIPT', 'STYLE', 'NOSCRIPT', 'LINK', 'META'].includes(n.tagName)
   ) || null;
 }
+
 
 function handlePickerHover(e) {
   if (!pickerActive) return;
@@ -731,6 +808,7 @@ function handlePickerHover(e) {
   createPickerOverlay();
   positionOverlay(target);
 }
+
 
 function handlePickerClick(e) {
   if (!pickerActive) return;
@@ -762,8 +840,10 @@ function handlePickerClick(e) {
   updateSelectionText();
 
   stopPicker();
+  updateActionButtons();
   captureAfterPick();
 }
+
 
 function handlePickerKeydown(e) {
   if (!pickerActive || e.key !== 'Escape') return;
@@ -772,19 +852,24 @@ function handlePickerKeydown(e) {
   e.stopPropagation();
   stopPicker();
   showStatusLine('Picker canceled.');
+  updateActionButtons();
 }
+
 
 function startPicker() {
   ensureWidget();
-  
+
+  if (pickerActive || aiRunning || captureRunning) return;
+
   pickerActive = true;
   document.addEventListener('mousemove', handlePickerHover, true);
   document.addEventListener('click', handlePickerClick, true);
   document.addEventListener('keydown', handlePickerKeydown, true);
   document.body.classList.add('webmcp-picking-cursor');
 
-  updateRunBtn();
+  updateActionButtons();
 }
+
 
 function stopPicker() {
   pickerActive = false;
@@ -802,11 +887,18 @@ function stopPicker() {
   lastPickerTarget = null;
 }
 
+
 // ─── Capture after pick ───────────────────────────────────────────────────────
 
-async function captureAfterPick() {
-  try {
 
+async function captureAfterPick() {
+  if (!selectedWrapperEl) return;
+
+  captureRunning = true;
+  clearStatusLine();
+  updateActionButtons();
+
+  try {
     lastDomPayload = buildDomSummary(selectedWrapperEl);
     setPreparedPayload(lastDomPayload);
 
@@ -839,22 +931,28 @@ async function captureAfterPick() {
     showStatusLine('Prepared payload and screenshot are ready.');
   } catch (err) {
     lastScreenshot = null;
+    lastDomPayload = selectedWrapperEl ? buildDomSummary(selectedWrapperEl) : null;
     setPreparedScreenshot(null);
+    setPreparedPayload(lastDomPayload);
     showStatusLine(`Screenshot capture failed: ${err.message}`);
   } finally {
+    captureRunning = false;
     if (widgetRoot) widgetRoot.classList.remove('webmcp-hidden');
-    updateRunBtn();
+    updateActionButtons();
+    widgetClearBtn.disabled = false;
   }
 }
 
+
 // ─── AI analysis ─────────────────────────────────────────────────────────────
 
+
 async function runAiAnalysis() {
-  if (aiRunning || !lastScreenshot || !lastDomPayload) return;
+  if (aiRunning || captureRunning || !lastScreenshot || !lastDomPayload) return;
 
   aiRunning = true;
   setResultText('');
-  updateRunBtn();
+  updateActionButtons();
   showStatusLine('Running AI analysis…');
 
   try {
@@ -871,11 +969,13 @@ async function runAiAnalysis() {
     throw err;
   } finally {
     aiRunning = false;
-    updateRunBtn();
+    updateActionButtons();
   }
 }
 
+
 // ─── Init ────────────────────────────────────────────────────────────────────
+
 
 if (IS_TOP_WINDOW) {
   ensureWidget();
@@ -889,6 +989,7 @@ if (IS_TOP_WINDOW) {
 
       case 'cancelWrapperPicker':
         stopPicker();
+        updateActionButtons();
         sendResponse({ success: true });
         break;
 
