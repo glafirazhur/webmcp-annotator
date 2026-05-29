@@ -1,10 +1,9 @@
 /**
- * @fileoverview WebMCP content script — picker, DOM summary builder, AI call, result display.
+ * @fileoverview WebMCP content script — picker, DOM summary builder, AI call,
+ * result display and visual annotation preview.
  */
 
-
 // ─── XPath ───────────────────────────────────────────────────────────────────
-
 
 function getXPath(el) {
   if (!(el instanceof Element)) return null;
@@ -28,9 +27,24 @@ function getXPath(el) {
   return '/' + parts.join('/');
 }
 
+function getElementByXPath(xpath) {
+  if (!xpath || typeof xpath !== 'string') return null;
+
+  try {
+    const result = document.evaluate(
+      xpath,
+      document,
+      null,
+      XPathResult.FIRST_ORDERED_NODE_TYPE,
+      null
+    );
+    return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 // ─── DOM summary ─────────────────────────────────────────────────────────────
-
 
 const CONTROL_TAGS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'LINK', 'META', 'BR', 'HR', 'IMG']);
@@ -40,17 +54,14 @@ const TEXT_TAGS = new Set([
   'SUMMARY', 'FIGCAPTION', 'BLOCKQUOTE', 'STRONG', 'EM', 'A'
 ]);
 
-
 function collapseWS(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
-
 
 function truncate(text, max) {
   const s = collapseWS(text);
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
-
 
 function isHidden(el) {
   if (el.hidden) return true;
@@ -58,11 +69,9 @@ function isHidden(el) {
   return s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
 }
 
-
 function isClickableLink(el) {
   return el.tagName === 'A' && (Boolean(el.getAttribute('href')) || el.getAttribute('role') === 'button');
 }
-
 
 function isCustomControl(el) {
   const role = (el.getAttribute('role') || '').toLowerCase();
@@ -81,7 +90,6 @@ function isCustomControl(el) {
 
   return false;
 }
-
 
 function getLabels(control) {
   const out = [];
@@ -102,7 +110,6 @@ function getLabels(control) {
 
   return out;
 }
-
 
 function buildCandidate(el, kind) {
   const node = {
@@ -133,7 +140,6 @@ function buildCandidate(el, kind) {
 
   return node;
 }
-
 
 function buildDomSummary(wrapperEl) {
   const controls = [];
@@ -171,9 +177,7 @@ function buildDomSummary(wrapperEl) {
   };
 }
 
-
 // ─── AI ──────────────────────────────────────────────────────────────────────
-
 
 function getAiSchema() {
   return {
@@ -219,24 +223,6 @@ function getAiSchema() {
               type: 'STRING',
               description: 'Explanation of what this parameter controls. MUST be in the exact same language as the webpage.'
             },
-            /*options: {
-              type: 'ARRAY',
-              description: 'If the element is a select dropdown, radio group, or variant picker, list ALL available options here. Leave empty for text/number inputs.',
-              items: {
-                type: 'OBJECT',
-                properties: {
-                  value: {
-                    type: 'STRING',
-                    description: 'The text or label of the option as seen on the screen (e.g., "XL", "Красный", "Envío a domicilio"). MUST be in the exact same language as the webpage.'
-                  },
-                  xpath: {
-                    type: 'STRING',
-                    description: 'The specific candidate XPath for this option element if present, or the parent element XPath.'
-                  }
-                },
-                required: ['value']
-              }
-            }*/
           },
           required: ['xpath', 'toolparamtitle', 'toolparamdescription']
         }
@@ -245,7 +231,6 @@ function getAiSchema() {
     required: ['container', 'elements']
   };
 }
-
 
 function parseAiResponse(payload) {
   const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -261,7 +246,6 @@ function parseAiResponse(payload) {
 
   return parsed;
 }
-
 
 async function getAiSettings() {
   const defaults = { settings_model: 'gemini-3.5-flash', settings_api_key: '' };
@@ -280,11 +264,9 @@ async function getAiSettings() {
   });
 }
 
-
 function sanitizeBase64Image(data) {
   return String(data || '').replace(/^data:[^,]+,/, '').trim();
 }
-
 
 async function readGeminiError(response) {
   try {
@@ -306,7 +288,6 @@ async function readGeminiError(response) {
     return `AI API ${response.status}: request failed`;
   }
 }
-
 
 async function callAi({ screenshot, payload }) {
   const { settings_api_key: apiKey, settings_model: rawModel } = await getAiSettings();
@@ -334,25 +315,30 @@ async function callAi({ screenshot, payload }) {
         systemInstruction: {
           parts: [{
             text: [
-              'You annotate a selected webpage wrapper for a WebMCP tool.',
-              'Use only candidate xpaths from the input payload. Do not invent xpaths.',
-              'container.xpath must exactly match input.containerXPath.',
-              'Return only confident fields. At most one element per fieldId.',
+              'You are a strict WebMCP Tool Specification Generator. Your single task is to map HTML candidates into the required JSON schema for a primary user action.',
               '',
-              '# CRITICAL RULES FOR OPTIONS AND FORM FIELDS:',
-              'Include ALL interactive form options, product variants, and calculation inputs inside the container.',
+              '### 1. Container Mapping Rules',
+              '- "container.xpath": Must exactly mirror the provided "input.containerXPath".',
+              '- "container.contentType": Classify the visual block based on elements (e.g., "product card", "configurator").',
+              '- "container.toolname": Generate a concise action-based ID (e.g., "añadir_al_carrito") using lowercase and snake_case/kebab_case. It MUST be in the webpage\'s natural language.',
+              '- "container.tooldescription": Write a clear summary of what the tool accomplishes, in the webpage\'s natural language.',
               '',
-              '# VISUAL GROUNDING FOR UNLABELED INPUTS (UNIVERSAL):',
-              '1. Some critical input fields may lack explicit text labels in the JSON candidates list (they might only have a default numeric value or placeholder like "1" or "0").',
-              '2. You MUST cross-reference the XPath candidates with the provided screenshot by analyzing their visual positions relative to surrounding elements.',
-              '3. Look for text units, labels, badges, or symbols printed directly next to, above, or inside the input field ON THE SCREENSHOT (e.g., measurement units, currencies, pack sizes, or fractional text like "pcs", "kg", "m²", "ml", "box", "€", "$").',
-              '4. If an input field dynamically changes or calculates quantities, volumes, or pricing context visually, you MUST include it as a separate parameter.',
-              '5. Infer the "toolparamtitle" and "toolparamdescription" based on these visual unit indicators and the overall form context.',
+              '### 2. Element Extraction Strategy (RUTHLESS INPUT INVENTORY)',
+              'You MUST process the candidates using a strict input-first checklist:',
+              '- MANDATORY RULE: Every single candidate with `tagName: "input"` or `tagName: "select"` is a core parameter. You are FORBIDDEN from skipping them.',
+              '- If an `input` has a raw numeric value (e.g., "6,00"), it represents a critical product variant (length, size, or price specification). It MUST be included in the "elements" array.',
+              '- Identify the core execution button (e.g., "Añadir al carrito") to anchor the tool flow, but do not let it overshadow the numeric inputs above it.',
               '',
-              '# CRITICAL LANGUAGE RULE:',
-              '1. STRICTLY matches the natural language of the analyzed webpage.',
-              '2. "toolname", "tooldescription", "toolparamtitle", and "toolparamdescription" MUST be written in the EXACT SAME LANGUAGE as the labels and text found on the screenshot and DOM for this host page.',
-              '3. NEVER translate labels to English. If the website is in French, use French; if it is in German, use German, etc. Match the host locale dynamically.'
+              '### 3. Parameter Synthesizing (For "elements" Array)',
+              'For each identified `input` or configuration control, emit exactly ONE object in the "elements" array:',
+              '- "xpath": The exact XPath of the `input` or functional control.',
+              '- "toolparamtitle": The visible label. If the `input` contains a raw number like "6,00" and lacks an explicit label, you MUST look at the nearest text candidates (such as product titles or descriptions like "6 m x 9 mm") to synthesize a logical title (e.g., "Longitud" or "Medidas") in the webpage\'s language.',
+              '- "toolparamdescription": A concise instruction of what this parameter sets (in the webpage\'s language).',
+              '',
+              '### 4. Directives to Save Tokens & Filter Noise',
+              '- Combine stepper pairs (plus/minus buttons) into the single numeric input XPath they modify. Do not emit separate parameters for "+" and "-".',
+              '- Completely ignore: Image carousels ("Siguiente diapositiva"), reviews, wishlists, share options, and alternative fulfillment links ("Comprobar disponibilidad").',
+              '- Write descriptions sharply and without introductory filler words.'
             ].join('\n')
           }]
         },
@@ -371,9 +357,7 @@ async function callAi({ screenshot, payload }) {
                 'Analyze the selected wrapper using the screenshot and DOM candidate list.',
                 '',
                 '# Input payload',
-                '<input_payload>',
-                JSON.stringify(payload, null, 2),
-                '</input_payload>'
+                JSON.stringify(payload, null, 2)
               ].join('\n')
             }
           ]
@@ -394,9 +378,7 @@ async function callAi({ screenshot, payload }) {
   return parseAiResponse(await response.json());
 }
 
-
 // ─── State ───────────────────────────────────────────────────────────────────
-
 
 const IS_TOP_WINDOW = window === window.top;
 
@@ -411,36 +393,615 @@ let selectedWrapperRect = null;
 
 let lastScreenshot = null;
 let lastDomPayload = null;
+let lastAiResult = null;
+
 let aiRunning = false;
 let captureRunning = false;
 
-
 // ─── Widget ──────────────────────────────────────────────────────────────────
-
 
 let widgetRoot = null;
 let widgetStatusLine = null;
 let widgetSelection = null;
-
 let widgetScreenshotSection = null;
 let widgetScreenshotImg = null;
-
 let widgetPayloadSection = null;
 let widgetPreparedPayload = null;
-
 let widgetResultSection = null;
 let widgetResult = null;
-
 let widgetPickBtn = null;
 let widgetRunBtn = null;
+let widgetPreviewBtn = null;
 let widgetClearBtn = null;
-
 let dragState = null;
 
+// ─── Annotation overlay ──────────────────────────────────────────────────────
+
+// ─── Annotation overlay ──────────────────────────────────────────────────────
+
+let annotationVisible = false;
+let annotationLayer = null;
+let annotationLegend = null;
+let annotationLegendList = null;
+let annotationLegendFooter = null;
+let annotationRegisterBtn = null;
+let annotationNodes = [];
+let annotationLegendItems = [];
+let annotationRaf = 0;
+let annotationRefreshQueued = false;
+let registeredToolAbortController = null;
+let registeredToolName = '';
+
+const WEBMCP_ATTRS = {
+  toolName: 'toolname',
+  toolDescription: 'tooldescription',
+  toolAutoSubmit: 'toolautosubmit',
+  paramTitle: 'toolparamtitle',
+  paramDescription: 'toolparamdescription'
+};
+
+function setWebMcpAttribute(el, name, value) {
+  if (!(el instanceof Element) || !name) return;
+  const normalized = collapseWS(value || '');
+  if (!normalized) return;
+  el.setAttribute(name, normalized);
+}
+
+function clearWebMcpAttributes(root = document) {
+  const selector = [
+    '[toolname]',
+    '[tooldescription]',
+    '[toolautosubmit]',
+    '[toolparamtitle]',
+    '[toolparamdescription]'
+  ].join(',');
+
+  for (const el of root.querySelectorAll(selector)) {
+    el.removeAttribute(WEBMCP_ATTRS.toolName);
+    el.removeAttribute(WEBMCP_ATTRS.toolDescription);
+    el.removeAttribute(WEBMCP_ATTRS.toolAutoSubmit);
+    el.removeAttribute(WEBMCP_ATTRS.paramTitle);
+    el.removeAttribute(WEBMCP_ATTRS.paramDescription);
+  }
+}
+
+function resolveWebMcpToolHost(result) {
+  const containerEl = getElementByXPath(result?.container?.xpath);
+  if (!containerEl) return null;
+
+  if (containerEl.tagName === 'FORM') return containerEl;
+
+  const nestedForm = containerEl.querySelector('form');
+  if (nestedForm) return nestedForm;
+
+  for (const item of result?.elements || []) {
+    const el = getElementByXPath(item.xpath);
+    const form = el?.closest?.('form');
+    if (form) return form;
+  }
+
+  return null;
+}
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function shortenXPath(xpath, max = 72) {
+  const text = String(xpath || '');
+  if (text.length <= max) return text;
+  return '…' + text.slice(-(max - 1));
+}
+
+function getElementMeta(el) {
+  if (!(el instanceof Element)) return '';
+  const tag = el.tagName.toLowerCase();
+  const type = el.getAttribute('type');
+  return type ? `${tag}[type="${type}"]` : tag;
+}
+
+function normalizeToolName(value) {
+  let name = collapseWS(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_.:-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[^A-Za-z_]+/, '')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 128);
+
+  if (!name) {
+    name = `_webmcp_tool_${Date.now()}`;
+  }
+
+  if (!/^[A-Za-z_]/.test(name)) {
+    name = `_${name}`;
+  }
+
+  return name.slice(0, 128);
+}
+
+function makeParamKey(item, el, index) {
+  const fromName = collapseWS(el?.getAttribute?.('name') || '');
+  if (fromName) {
+    return fromName
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^\w.-]/g, '')
+      .slice(0, 128);
+  }
+
+  const fromTitle = collapseWS(item?.toolparamtitle || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^\w.-]/g, '')
+    .slice(0, 128);
+
+  return fromTitle || `param_${index + 1}`;
+}
+
+function shouldEnableAutoSubmit(result) {
+  return (result?.elements || []).some((item) => {
+    const text = collapseWS(`${item.toolparamtitle || ''} ${item.toolparamdescription || ''}`).toLowerCase();
+    return (
+      text.includes('add to cart') ||
+      text.includes('añadir al carrito') ||
+      text.includes('carrito') ||
+      text.includes('comprar') ||
+      text.includes('checkout') ||
+      text.includes('buy')
+    );
+  });
+}
+
+function buildToolInputSchema(result) {
+  const properties = {};
+  const required = [];
+
+  (result?.elements || []).forEach((item, index) => {
+    const el = getElementByXPath(item.xpath);
+    if (!el) return;
+
+    const key = makeParamKey(item, el, index);
+
+    properties[key] = {
+      type: 'string',
+      title: collapseWS(item.toolparamtitle || ''),
+      description: collapseWS(item.toolparamdescription || '')
+    };
+
+    if (el.hasAttribute('required') || el.getAttribute('aria-required') === 'true') {
+      required.push(key);
+    }
+  });
+
+  return {
+    type: 'object',
+    properties,
+    required
+  };
+}
+
+async function executeRegisteredTool(input, client, result) {
+  const host = resolveWebMcpToolHost(result);
+  if (!host) {
+    throw new Error('Annotated tool host not found.');
+  }
+
+  (result?.elements || []).forEach((item, index) => {
+    const el = getElementByXPath(item.xpath);
+    if (!el) return;
+
+    const key = makeParamKey(item, el, index);
+    if (!(key in (input || {}))) return;
+
+    const value = input[key];
+
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+      el.focus?.();
+      el.value = String(value ?? '');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+
+    if (value && typeof el.click === 'function') {
+      el.click();
+    }
+  });
+
+  const runSubmit = async () => {
+    if (host instanceof HTMLFormElement) {
+      host.requestSubmit();
+    } else if (typeof host.click === 'function') {
+      host.click();
+    }
+    return { success: true };
+  };
+
+  if (host.getAttribute(WEBMCP_ATTRS.toolAutoSubmit) === 'true') {
+    if (client?.requestUserInteraction) {
+      return client.requestUserInteraction(runSubmit);
+    }
+    return runSubmit();
+  }
+
+  return { success: true };
+}
+
+function collectDeclarativeRegistrationDetail(result) {
+  const host = resolveWebMcpToolHost(result);
+  const containerEl = getElementByXPath(result?.container?.xpath);
+
+  return {
+    mode: 'declarative',
+    toolname: normalizeToolName(result?.container?.toolname || ''),
+    tooldescription: collapseWS(result?.container?.tooldescription || ''),
+    containerXPath: result?.container?.xpath || '',
+    hostTag: (host || containerEl)?.tagName?.toLowerCase() || '',
+    toolautosubmit: (host || containerEl)?.getAttribute?.(WEBMCP_ATTRS.toolAutoSubmit) || '',
+    params: (result?.elements || []).map((item) => {
+      const el = getElementByXPath(item.xpath);
+      return {
+        xpath: item.xpath,
+        node: getElementMeta(el),
+        toolparamtitle: collapseWS(item.toolparamtitle || ''),
+        toolparamdescription: collapseWS(item.toolparamdescription || '')
+      };
+    })
+  };
+}
+
+async function registerAnnotatedWebMcpTool() {
+  const result = lastAiResult;
+  if (!result?.container?.xpath) return;
+
+  const host = resolveWebMcpToolHost(result) || getElementByXPath(result.container.xpath);
+  if (!host) return;
+
+  const normalizedToolName = normalizeToolName(result.container.toolname);
+
+  setWebMcpAttribute(host, WEBMCP_ATTRS.toolName, normalizedToolName);
+  setWebMcpAttribute(host, WEBMCP_ATTRS.toolDescription, result.container.tooldescription);
+
+  if (shouldEnableAutoSubmit(result)) {
+    setWebMcpAttribute(host, WEBMCP_ATTRS.toolAutoSubmit, 'true');
+  }
+
+  const detail = collectDeclarativeRegistrationDetail(result);
+
+  window.dispatchEvent(new CustomEvent('webmcp:tool-registered', {
+    detail
+  }));
+
+  if (!document.modelContext?.registerTool) {
+    showStatusLine(`WebMCP tool registered in declarative mode: ${detail.toolname}`);
+    return;
+  }
+
+  try {
+    if (registeredToolAbortController) {
+      registeredToolAbortController.abort();
+      registeredToolAbortController = null;
+    }
+
+    registeredToolAbortController = new AbortController();
+    registeredToolName = normalizedToolName;
+
+    document.modelContext.registerTool({
+      name: normalizedToolName,
+      title: normalizedToolName,
+      description: detail.tooldescription,
+      inputSchema: buildToolInputSchema(result),
+      execute: (input, client) => executeRegisteredTool(input, client, result)
+    }, {
+      signal: registeredToolAbortController.signal
+    });
+
+    showStatusLine(`WebMCP tool registered: ${normalizedToolName}`);
+  } catch (error) {
+    showStatusLine(`WebMCP registration error: ${error?.message || error}`);
+  }
+}
+
+
+function ensureAnnotationLayer() {
+  if (annotationLayer && document.contains(annotationLayer)) return annotationLayer;
+
+  annotationLayer = document.createElement('div');
+  annotationLayer.id = 'webmcp-annotation-layer';
+  annotationLayer.setAttribute('data-webmcp-annotation-layer', 'true');
+  document.documentElement.appendChild(annotationLayer);
+
+  return annotationLayer;
+}
+
+function ensureAnnotationLegend() {
+  if (annotationLegend && document.contains(annotationLegend)) return annotationLegend;
+
+  annotationLegend = document.createElement('aside');
+  annotationLegend.id = 'webmcp-annotation-legend';
+  annotationLegend.setAttribute('data-webmcp-annotation-legend', 'true');
+  annotationLegend.setAttribute('aria-label', 'WebMCP annotation legend');
+
+  const title = document.createElement('div');
+  title.className = 'webmcp-annotation-legend-title';
+  title.textContent = 'Annotation legend';
+
+  annotationLegendList = document.createElement('div');
+  annotationLegendList.className = 'webmcp-annotation-legend-list';
+
+  annotationLegendFooter = document.createElement('div');
+  annotationLegendFooter.className = 'webmcp-annotation-legend-footer';
+
+  annotationRegisterBtn = document.createElement('button');
+  annotationRegisterBtn.type = 'button';
+  annotationRegisterBtn.className = 'webmcp-btn webmcp-btn-primary webmcp-annotation-register-btn';
+  annotationRegisterBtn.textContent = 'Register WebMCP Tool';
+  annotationRegisterBtn.addEventListener('click', registerAnnotatedWebMcpTool);
+
+  annotationLegendFooter.appendChild(annotationRegisterBtn);
+  annotationLegend.append(title, annotationLegendList, annotationLegendFooter);
+  document.body.appendChild(annotationLegend);
+
+  return annotationLegend;
+}
+
+
+function clearAnnotations() {
+  if (annotationRaf) {
+    cancelAnimationFrame(annotationRaf);
+    annotationRaf = 0;
+  }
+
+  annotationRefreshQueued = false;
+
+  annotationNodes.forEach((item) => item?.box?.remove());
+  annotationNodes = [];
+  annotationLegendItems = [];
+
+  if (annotationLayer) {
+    annotationLayer.remove();
+    annotationLayer = null;
+  }
+
+  if (annotationLegend) {
+    annotationLegend.remove();
+    annotationLegend = null;
+    annotationLegendList = null;
+    annotationLegendFooter = null;
+    annotationRegisterBtn = null;
+  }
+
+  clearWebMcpAttributes();
+  annotationVisible = false;
+  updateActionButtons();
+}
+
+function makeAnnotationBox({ targetEl, className, index, tone = 'element' }) {
+  if (!(targetEl instanceof Element)) return null;
+
+  const layer = ensureAnnotationLayer();
+  const box = document.createElement('div');
+  box.className = className;
+
+  const badge = document.createElement('div');
+  badge.className = `webmcp-annotation-badge webmcp-annotation-badge-${tone}`;
+  badge.textContent = String(index);
+
+  box.appendChild(badge);
+  layer.appendChild(box);
+
+  const item = { box, badge, targetEl };
+  annotationNodes.push(item);
+  updateAnnotationItemPosition(item);
+
+  return item;
+}
+
+function renderAnnotationLegend(items) {
+  ensureAnnotationLegend();
+  if (!annotationLegendList) return;
+
+  annotationLegendList.textContent = '';
+
+  for (const item of items) {
+    const row = document.createElement('section');
+    row.className = 'webmcp-annotation-legend-item';
+
+    const head = document.createElement('div');
+    head.className = 'webmcp-annotation-legend-head';
+
+    const index = document.createElement('span');
+    index.className = `webmcp-annotation-legend-index webmcp-annotation-legend-index-${item.tone || 'element'}`;
+    index.textContent = String(item.index);
+
+    const title = document.createElement('span');
+    title.className = 'webmcp-annotation-legend-item-title';
+    title.textContent = item.title || 'Untitled';
+
+    head.append(index, title);
+    row.appendChild(head);
+
+    if (item.node) {
+      const nodeEl = document.createElement('div');
+      nodeEl.className = 'webmcp-annotation-legend-node';
+      nodeEl.textContent = item.node;
+      row.appendChild(nodeEl);
+    }
+
+    for (const line of item.lines || []) {
+      const lineEl = document.createElement('div');
+      lineEl.className = 'webmcp-annotation-legend-line';
+      lineEl.textContent = line;
+      row.appendChild(lineEl);
+    }
+
+    annotationLegendList.appendChild(row);
+  }
+}
+
+function renderAnnotations(result) {
+  clearAnnotations();
+  clearWebMcpAttributes();
+
+  if (!result?.container?.xpath) {
+    showStatusLine('No AI result available for preview.');
+    return;
+  }
+
+  const legendItems = [];
+  const containerEl = getElementByXPath(result.container.xpath);
+  const toolHost = resolveWebMcpToolHost(result);
+  const normalizedToolName = normalizeToolName(result.container.toolname);
+
+  if (toolHost) {
+    setWebMcpAttribute(toolHost, WEBMCP_ATTRS.toolName, normalizedToolName);
+    setWebMcpAttribute(toolHost, WEBMCP_ATTRS.toolDescription, result.container.tooldescription);
+
+    if (shouldEnableAutoSubmit(result)) {
+      setWebMcpAttribute(toolHost, WEBMCP_ATTRS.toolAutoSubmit, 'true');
+    }
+  }
+
+  if (containerEl) {
+    const rect = containerEl.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      makeAnnotationBox({
+        targetEl: containerEl,
+        className: 'webmcp-annotation-box webmcp-annotation-container',
+        index: 'C',
+        tone: 'container'
+      });
+
+      const hostForLegend = toolHost || containerEl;
+      const containerLines = [
+        `${WEBMCP_ATTRS.toolName}="${normalizedToolName}"`,
+        `${WEBMCP_ATTRS.toolDescription}="${collapseWS(result.container.tooldescription || '')}"`
+      ];
+
+      if (hostForLegend.getAttribute(WEBMCP_ATTRS.toolAutoSubmit)) {
+        containerLines.push(`${WEBMCP_ATTRS.toolAutoSubmit}="${hostForLegend.getAttribute(WEBMCP_ATTRS.toolAutoSubmit)}"`);
+      }
+
+      legendItems.push({
+        index: 'C',
+        tone: 'container',
+        title: collapseWS(result.container.toolname || 'Container'),
+        node: getElementMeta(hostForLegend),
+        lines: containerLines
+      });
+    }
+  }
+
+  let visibleCount = 0;
+
+  for (const item of result.elements || []) {
+    const el = getElementByXPath(item.xpath);
+    if (!el) continue;
+
+    setWebMcpAttribute(el, WEBMCP_ATTRS.paramTitle, item.toolparamtitle);
+    setWebMcpAttribute(el, WEBMCP_ATTRS.paramDescription, item.toolparamdescription);
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    visibleCount += 1;
+
+    makeAnnotationBox({
+      targetEl: el,
+      className: 'webmcp-annotation-box webmcp-annotation-element',
+      index: String(visibleCount),
+      tone: 'element'
+    });
+
+    legendItems.push({
+      index: String(visibleCount),
+      tone: 'element',
+      title: collapseWS(item.toolparamtitle || `Element ${visibleCount}`),
+      node: getElementMeta(el),
+      lines: [
+        `${WEBMCP_ATTRS.paramTitle}="${collapseWS(item.toolparamtitle || '')}"`,
+        `${WEBMCP_ATTRS.paramDescription}="${collapseWS(item.toolparamdescription || '')}"`
+      ]
+    });
+  }
+
+  renderAnnotationLegend(legendItems);
+  annotationLegendItems = legendItems;
+  annotationVisible = true;
+  updateActionButtons();
+  refreshAnnotationPositions();
+
+  if (!toolHost) {
+    showStatusLine('Preview rendered. Params were injected, but no FORM host was found for toolname/tooldescription.');
+    return;
+  }
+
+  showStatusLine(`Preview rendered and WebMCP attributes injected: ${visibleCount} element(s).`);
+}
+
+function updateAnnotationItemPosition(item) {
+  if (!item?.box || !(item.targetEl instanceof Element)) return;
+
+  const rect = item.targetEl.getBoundingClientRect();
+  item.box.style.left = `${rect.left}px`;
+  item.box.style.top = `${rect.top}px`;
+  item.box.style.width = `${Math.max(rect.width, 18)}px`;
+  item.box.style.height = `${Math.max(rect.height, 18)}px`;
+  item.box.style.display = rect.width > 0 && rect.height > 0 ? 'block' : 'none';
+}
+
+function refreshAnnotationPositions() {
+  if (!annotationVisible) return;
+
+  annotationRefreshQueued = false;
+
+  for (const item of annotationNodes) {
+    updateAnnotationItemPosition(item);
+  }
+}
+
+function scheduleAnnotationRefresh() {
+  if (!annotationVisible || annotationRefreshQueued) return;
+
+  annotationRefreshQueued = true;
+  annotationRaf = requestAnimationFrame(() => {
+    annotationRaf = 0;
+    refreshAnnotationPositions();
+  });
+}
+
+window.addEventListener('scroll', scheduleAnnotationRefresh, { passive: true });
+window.addEventListener('resize', scheduleAnnotationRefresh, { passive: true });
+
+function toggleAnnotations() {
+  if (annotationVisible) {
+    clearAnnotations();
+    showStatusLine('Preview cleared.');
+    return;
+  }
+
+  if (!lastAiResult) {
+    showStatusLine('Run AI first to preview markup.');
+    return;
+  }
+
+  renderAnnotations(lastAiResult);
+}
+
+// ─── Widget helpers ──────────────────────────────────────────────────────────
 
 function ensureWidget() {
-  if (!IS_TOP_WINDOW) return;
-  if (widgetRoot && document.contains(widgetRoot)) return;
+  if (!IS_TOP_WINDOW) return null;
+  if (widgetRoot && document.contains(widgetRoot)) return widgetRoot;
 
   widgetRoot = document.createElement('section');
   widgetRoot.id = 'webmcp-floating-widget';
@@ -454,16 +1015,15 @@ function ensureWidget() {
   title.textContent = 'WebMCP Annotator';
   title.className = 'webmcp-widget-title';
 
-  const dragHint = document.createElement('div');
-  dragHint.textContent = 'Drag';
-  dragHint.className = 'webmcp-drag-hint';
-
   widgetClearBtn = document.createElement('button');
   widgetClearBtn.type = 'button';
   widgetClearBtn.textContent = 'Clear';
   widgetClearBtn.className = 'webmcp-btn webmcp-btn-clear';
   widgetClearBtn.disabled = true;
- 
+
+  const dragHint = document.createElement('div');
+  dragHint.textContent = 'Drag';
+  dragHint.className = 'webmcp-drag-hint';
 
   header.appendChild(title);
   header.appendChild(widgetClearBtn);
@@ -471,13 +1031,15 @@ function ensureWidget() {
 
   const widgetInstructions = document.createElement('div');
   widgetInstructions.className = 'webmcp-widget-instructions';
-  widgetInstructions.innerHTML =
-    '<p>This widget annotates your content for AI Agents following the WebMCP standard.</p>' +
-    '<ol>' +
-    '<li>Click "Pick Target" and select a wrapper on the page.</li>' +
-    '<li>Review the prepared screenshot and payload.</li>' +
-    '<li>Click "Run AI" to get annotation suggestions.</li>' +
-    '</ol>';
+  widgetInstructions.innerHTML = `
+    <p>This widget annotates your content for AI Agents following the WebMCP standard.</p>
+    <ol>
+      <li>Click Pick Target and select a wrapper on the page.</li>
+      <li>Review the prepared screenshot and payload.</li>
+      <li>Click Run AI to get annotation suggestions.</li>
+      <li>Click Preview Markup to overlay the found elements.</li>
+    </ol>
+  `;
 
   const actions = document.createElement('div');
   actions.className = 'webmcp-actions';
@@ -493,8 +1055,15 @@ function ensureWidget() {
   widgetRunBtn.className = 'webmcp-btn webmcp-btn-analyze';
   widgetRunBtn.disabled = true;
 
+  widgetPreviewBtn = document.createElement('button');
+  widgetPreviewBtn.type = 'button';
+  widgetPreviewBtn.textContent = 'Preview Markup';
+  widgetPreviewBtn.className = 'webmcp-btn webmcp-btn-primary';
+  widgetPreviewBtn.disabled = true;
+
   actions.appendChild(widgetPickBtn);
   actions.appendChild(widgetRunBtn);
+  actions.appendChild(widgetPreviewBtn);
 
   widgetStatusLine = document.createElement('div');
   widgetStatusLine.className = 'webmcp-status-line visually-hidden';
@@ -515,7 +1084,8 @@ function ensureWidget() {
   widgetScreenshotImg.className = 'webmcp-screenshot';
   widgetScreenshotImg.alt = 'Prepared wrapper screenshot';
 
-  widgetScreenshotSection.append(screenshotTitle, widgetScreenshotImg);
+  widgetScreenshotSection.appendChild(screenshotTitle);
+  widgetScreenshotSection.appendChild(widgetScreenshotImg);
 
   widgetPayloadSection = document.createElement('section');
   widgetPayloadSection.className = 'webmcp-data-section webmcp-hidden';
@@ -527,7 +1097,8 @@ function ensureWidget() {
   widgetPreparedPayload = document.createElement('pre');
   widgetPreparedPayload.className = 'webmcp-selection webmcp-scroll-block';
 
-  widgetPayloadSection.append(payloadTitle, widgetPreparedPayload);
+  widgetPayloadSection.appendChild(payloadTitle);
+  widgetPayloadSection.appendChild(widgetPreparedPayload);
 
   widgetResultSection = document.createElement('section');
   widgetResultSection.className = 'webmcp-data-section webmcp-hidden';
@@ -539,7 +1110,8 @@ function ensureWidget() {
   widgetResult = document.createElement('pre');
   widgetResult.className = 'webmcp-result webmcp-scroll-block';
 
-  widgetResultSection.append(resultTitle, widgetResult);
+  widgetResultSection.appendChild(resultTitle);
+  widgetResultSection.appendChild(widgetResult);
 
   widgetRoot.append(
     header,
@@ -576,7 +1148,6 @@ function ensureWidget() {
 
   const onDragMove = (e) => {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
-
     setWidgetPos(
       dragState.left + e.clientX - dragState.startX,
       dragState.top + e.clientY - dragState.startY
@@ -585,11 +1156,9 @@ function ensureWidget() {
 
   const endDrag = (e) => {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
-
     try {
       header.releasePointerCapture(e.pointerId);
     } catch (_) { }
-
     dragState = null;
     header.classList.remove('is-dragging');
   };
@@ -617,6 +1186,11 @@ function ensureWidget() {
     });
   });
 
+  widgetPreviewBtn.addEventListener('click', () => {
+    clearStatusLine();
+    toggleAnnotations();
+  });
+
   widgetClearBtn.addEventListener('click', () => {
     resetWidgetState();
   });
@@ -626,21 +1200,24 @@ function ensureWidget() {
   setPreparedPayload(null);
   setResultText('');
   updateActionButtons();
-}
 
+  return widgetRoot;
+}
 
 function resetWidgetState() {
   if (aiRunning || captureRunning) return;
 
   stopPicker();
+  clearAnnotations();
 
   selectedWrapperEl = null;
   selectedWrapperXPath = null;
   selectedWrapperRect = null;
-
   lastScreenshot = null;
   lastDomPayload = null;
-  widgetClearBtn.disabled = true;
+  lastAiResult = null;
+
+  if (widgetClearBtn) widgetClearBtn.disabled = true;
 
   clearStatusLine();
   setPreparedScreenshot(null);
@@ -649,7 +1226,6 @@ function resetWidgetState() {
   updateSelectionText();
   updateActionButtons();
 }
-
 
 function setWidgetPos(left, top) {
   if (!widgetRoot) return;
@@ -664,20 +1240,17 @@ function setWidgetPos(left, top) {
   widgetRoot.style.bottom = 'auto';
 }
 
-
 function showStatusLine(text) {
   if (!widgetStatusLine) return;
   widgetStatusLine.textContent = text || '';
   widgetStatusLine.classList.toggle('visually-hidden', !text);
 }
 
-
 function clearStatusLine() {
   if (!widgetStatusLine) return;
   widgetStatusLine.textContent = '';
   widgetStatusLine.classList.add('visually-hidden');
 }
-
 
 function setPreparedScreenshot(screenshot) {
   if (!widgetScreenshotSection || !widgetScreenshotImg) return;
@@ -692,7 +1265,6 @@ function setPreparedScreenshot(screenshot) {
   widgetScreenshotSection.classList.remove('webmcp-hidden');
 }
 
-
 function setPreparedPayload(payload) {
   if (!widgetPayloadSection || !widgetPreparedPayload) return;
 
@@ -705,7 +1277,6 @@ function setPreparedPayload(payload) {
     widgetPayloadSection.classList.add('webmcp-hidden');
   }
 }
-
 
 function setResultText(text) {
   if (!widgetResultSection || !widgetResult) return;
@@ -720,36 +1291,43 @@ function setResultText(text) {
   }
 }
 
-
 function updateSelectionText() {
   if (!widgetSelection) return;
-
   widgetSelection.textContent = selectedWrapperXPath
-    ? `Selected: ${selectedWrapperXPath}`
+    ? `Selected:\n${selectedWrapperXPath}`
     : 'Selection: none';
 }
 
-
-
 function updateActionButtons() {
-  if (!widgetRunBtn || !widgetPickBtn) return;
-
   const busy = aiRunning || captureRunning;
-  const readyToRun = Boolean(selectedWrapperEl && lastScreenshot && lastDomPayload && !busy && !pickerActive);
 
-  widgetPickBtn.disabled = busy || pickerActive;
-  widgetPickBtn.classList.toggle('is-disabled', widgetPickBtn.disabled);
+  if (widgetPickBtn) {
+    widgetPickBtn.disabled = busy || pickerActive;
+    widgetPickBtn.classList.toggle('is-disabled', widgetPickBtn.disabled);
+  }
 
-  widgetRunBtn.disabled = !readyToRun;
-  widgetRunBtn.classList.toggle('is-disabled', widgetRunBtn.disabled);
+  if (widgetRunBtn) {
+    const readyToRun = Boolean(selectedWrapperEl && lastScreenshot && lastDomPayload && !busy && !pickerActive);
+    widgetRunBtn.disabled = !readyToRun;
+    widgetRunBtn.classList.toggle('is-disabled', widgetRunBtn.disabled);
+  }
+
+  if (widgetPreviewBtn) {
+    const canPreview = Boolean(lastAiResult && !busy && !pickerActive);
+    widgetPreviewBtn.disabled = !canPreview;
+    widgetPreviewBtn.classList.toggle('is-disabled', widgetPreviewBtn.disabled);
+    widgetPreviewBtn.textContent = annotationVisible ? 'Hide Preview' : 'Preview Markup';
+  }
+
+  if (widgetClearBtn) {
+    widgetClearBtn.disabled = busy || (!selectedWrapperEl && !lastAiResult && !annotationVisible);
+  }
 }
-
 
 // ─── Picker ──────────────────────────────────────────────────────────────────
 
-
 function createPickerOverlay() {
-  if (pickerOverlay) return;
+  if (pickerOverlay) return pickerOverlay;
 
   pickerOverlay = document.createElement('div');
   pickerOverlay.id = 'webmcp-picker-overlay';
@@ -761,11 +1339,12 @@ function createPickerOverlay() {
 
   pickerOverlay.appendChild(pickerLabel);
   document.body.appendChild(pickerOverlay);
+
+  return pickerOverlay;
 }
 
-
 function positionOverlay(el) {
-  if (!pickerOverlay) return;
+  if (!pickerOverlay || !(el instanceof Element)) return;
 
   const rect = el.getBoundingClientRect();
   pickerOverlay.style.cssText = `
@@ -776,10 +1355,9 @@ function positionOverlay(el) {
   `;
 
   if (pickerLabel) {
-    pickerLabel.textContent = `<${el.tagName.toLowerCase()}> ${Math.round(rect.width)}×${Math.round(rect.height)} · ${el.children.length} children`;
+    pickerLabel.textContent = `${el.tagName.toLowerCase()} · ${Math.round(rect.width)}×${Math.round(rect.height)} · ${el.children.length} children`;
   }
 }
-
 
 function resolvePickerTarget(e) {
   const stack = typeof document.elementsFromPoint === 'function'
@@ -790,10 +1368,10 @@ function resolvePickerTarget(e) {
     n instanceof Element &&
     !n.closest('#webmcp-picker-overlay') &&
     !n.closest('[data-webmcp-widget="true"]') &&
+    !n.closest('[data-webmcp-annotation-layer="true"]') &&
     !['SCRIPT', 'STYLE', 'NOSCRIPT', 'LINK', 'META'].includes(n.tagName)
   ) || null;
 }
-
 
 function handlePickerHover(e) {
   if (!pickerActive) return;
@@ -809,7 +1387,6 @@ function handlePickerHover(e) {
   positionOverlay(target);
 }
 
-
 function handlePickerClick(e) {
   if (!pickerActive) return;
 
@@ -820,7 +1397,6 @@ function handlePickerClick(e) {
   if (!target) return;
 
   const rect = target.getBoundingClientRect();
-
   selectedWrapperEl = target;
   selectedWrapperXPath = getXPath(target);
   selectedWrapperRect = {
@@ -833,6 +1409,8 @@ function handlePickerClick(e) {
 
   lastScreenshot = null;
   lastDomPayload = null;
+  lastAiResult = null;
+  clearAnnotations();
 
   setPreparedScreenshot(null);
   setPreparedPayload(null);
@@ -844,7 +1422,6 @@ function handlePickerClick(e) {
   captureAfterPick();
 }
 
-
 function handlePickerKeydown(e) {
   if (!pickerActive || e.key !== 'Escape') return;
 
@@ -855,10 +1432,8 @@ function handlePickerKeydown(e) {
   updateActionButtons();
 }
 
-
 function startPicker() {
   ensureWidget();
-
   if (pickerActive || aiRunning || captureRunning) return;
 
   pickerActive = true;
@@ -866,10 +1441,8 @@ function startPicker() {
   document.addEventListener('click', handlePickerClick, true);
   document.addEventListener('keydown', handlePickerKeydown, true);
   document.body.classList.add('webmcp-picking-cursor');
-
   updateActionButtons();
 }
-
 
 function stopPicker() {
   pickerActive = false;
@@ -881,15 +1454,13 @@ function stopPicker() {
   if (pickerOverlay) {
     pickerOverlay.remove();
     pickerOverlay = null;
-    pickerLabel = null;
   }
 
+  pickerLabel = null;
   lastPickerTarget = null;
 }
 
-
-// ─── Capture after pick ───────────────────────────────────────────────────────
-
+// ─── Capture after pick ──────────────────────────────────────────────────────
 
 async function captureAfterPick() {
   if (!selectedWrapperEl) return;
@@ -905,12 +1476,15 @@ async function captureAfterPick() {
     if (widgetRoot) widgetRoot.classList.add('webmcp-hidden');
 
     await new Promise((r) => setTimeout(r, 90));
-    await new Promise((r) => requestAnimationFrame(r));
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
 
     lastScreenshot = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: 'captureWrapperScreenshot', rect: selectedWrapperRect },
+        {
+          action: 'captureWrapperScreenshot',
+          rect: selectedWrapperRect
+        },
         (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -918,7 +1492,7 @@ async function captureAfterPick() {
           }
 
           if (response?.action !== 'wrapperScreenshotReady') {
-            reject(new Error(response?.error || 'Screenshot failed.'));
+            reject(new Error(response?.error || 'Screenshot capture failed.'));
             return;
           }
 
@@ -938,19 +1512,19 @@ async function captureAfterPick() {
   } finally {
     captureRunning = false;
     if (widgetRoot) widgetRoot.classList.remove('webmcp-hidden');
+    if (widgetClearBtn) widgetClearBtn.disabled = false;
     updateActionButtons();
-    widgetClearBtn.disabled = false;
   }
 }
 
-
 // ─── AI analysis ─────────────────────────────────────────────────────────────
-
 
 async function runAiAnalysis() {
   if (aiRunning || captureRunning || !lastScreenshot || !lastDomPayload) return;
 
   aiRunning = true;
+  lastAiResult = null;
+  clearAnnotations();
   setResultText('');
   updateActionButtons();
   showStatusLine('Running AI analysis…');
@@ -961,6 +1535,7 @@ async function runAiAnalysis() {
       payload: lastDomPayload
     });
 
+    lastAiResult = result;
     setResultText(JSON.stringify(result, null, 2));
     showStatusLine('AI analysis complete.');
   } catch (err) {
@@ -969,13 +1544,12 @@ async function runAiAnalysis() {
     throw err;
   } finally {
     aiRunning = false;
+    if (widgetClearBtn) widgetClearBtn.disabled = false;
     updateActionButtons();
   }
 }
 
-
 // ─── Init ────────────────────────────────────────────────────────────────────
-
 
 if (IS_TOP_WINDOW) {
   ensureWidget();
@@ -998,6 +1572,16 @@ if (IS_TOP_WINDOW) {
           .then(() => sendResponse({ success: true }))
           .catch((err) => sendResponse({ success: false, error: err.message }));
         return true;
+
+      case 'previewWrapperAnnotations':
+        toggleAnnotations();
+        sendResponse({ success: true });
+        break;
+
+      case 'clearWrapperAnnotations':
+        clearAnnotations();
+        sendResponse({ success: true });
+        break;
 
       default:
         sendResponse({ success: false, error: `Unknown action: ${request.action}` });

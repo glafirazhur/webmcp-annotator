@@ -133,3 +133,105 @@ Without options, with context (longitude) (gemini-3.5-flash)
     }
   ]
 }
+
+
+
+{
+  "container": {
+    "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]",
+    "contentType": "product card",
+    "toolname": "añadir-al-carrito",
+    "tooldescription": "Añadir el burlete de silicona Tesa INSULATION Premium Flexible al carrito de compra, permitiendo seleccionar la cantidad de unidades."
+  },
+  "elements": [
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/div[1]/input[1]",
+      "toolparamtitle": "Cantidad",
+      "toolparamdescription": "Número de unidades del producto que se desean comprar."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[1]",
+      "toolparamtitle": "Menos",
+      "toolparamdescription": "Disminuir la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[2]",
+      "toolparamtitle": "Más",
+      "toolparamdescription": "Aumentar la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[5]/div[1]/form[1]/button[1]",
+      "toolparamtitle": "Añadir al carrito",
+      "toolparamdescription": "Confirmar la selección y añadir el producto al carrito de compra."
+    }
+  ]
+}
+
+
+{
+  "container": {
+    "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]",
+    "contentType": "product card",
+    "toolname": "añadir-al-carrito",
+    "tooldescription": "Permite seleccionar la cantidad de producto y añadirlo al carrito de compra, ya sea para pedido online o Click & Collect."
+  },
+  "elements": [
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[1]/input[1]",
+      "toolparamtitle": "Longitud",
+      "toolparamdescription": "La longitud del producto en metros."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/div[1]/input[1]",
+      "toolparamtitle": "Cantidad",
+      "toolparamdescription": "El número de unidades del producto a comprar."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[1]",
+      "toolparamtitle": "Menos",
+      "toolparamdescription": "Disminuir la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[2]",
+      "toolparamtitle": "Más",
+      "toolparamdescription": "Aumentar la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[5]/div[1]/form[1]/button[1]",
+      "toolparamtitle": "Añadir al carrito",
+      "toolparamdescription": "Añadir el producto con la cantidad seleccionada al carrito de compra."
+    }
+  ]
+}
+
+
+{
+  "container": {
+    "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]",
+    "contentType": "product card",
+    "toolname": "añadir-al-carrito",
+    "tooldescription": "Permite seleccionar la cantidad de unidades del producto Tesa INSULATION Burlete de silicona Premium Flexible y añadirlo al carrito de compra, eligiendo entre pedido online o Click & Collect."
+  },
+  "elements": [
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/div[1]/input[1]",
+      "toolparamtitle": "Cantidad",
+      "toolparamdescription": "Número de unidades del producto que se desean comprar."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[1]",
+      "toolparamtitle": "Menos",
+      "toolparamdescription": "Disminuye la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[4]/div[2]/div[1]/button[2]",
+      "toolparamtitle": "Más",
+      "toolparamdescription": "Aumenta la cantidad de unidades."
+    },
+    {
+      "xpath": "/html[1]/body[1]/main[1]/main[1]/div[2]/div[1]/div[1]/div[4]/div[5]/div[1]/form[1]/button[1]",
+      "toolparamtitle": "Añadir al carrito",
+      "toolparamdescription": "Añade el producto con la cantidad seleccionada al carrito de compra."
+    }
+  ]
+}

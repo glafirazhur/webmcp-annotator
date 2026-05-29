@@ -304,6 +304,169 @@ body.webmcp-picking-cursor {
   z-index: 2147483647;
 }
 
+#webmcp-annotation-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483644;
+}
+
+.webmcp-annotation-box {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.webmcp-annotation-container {
+  border: 2px solid rgba(59, 130, 246, 0.95);
+  background: rgba(59, 130, 246, 0.05);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.28);
+}
+
+.webmcp-annotation-element {
+  border: 2px solid rgba(16, 185, 129, 0.95);
+  background: rgba(16, 185, 129, 0.07);
+  box-shadow: 0 0 0 1px rgba(110, 231, 183, 0.24);
+}
+
+.webmcp-annotation-badge {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #fff;
+  font: 700 11px/1 'Plus Jakarta Sans', 'Segoe UI', Arial, sans-serif;
+  letter-spacing: 0.01em;
+  box-shadow: 0 8px 18px rgba(2, 6, 23, 0.32);
+}
+
+.webmcp-annotation-badge-container {
+  background: rgba(37, 99, 235, 0.98);
+}
+
+.webmcp-annotation-badge-element {
+  background: rgba(5, 150, 105, 0.98);
+}
+
+#webmcp-annotation-legend {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(62vh, 640px);
+  overflow: auto;
+  z-index: 2147483644;
+  border: 1px solid rgba(203, 213, 225, 0.34);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(2, 6, 23, 0.96);
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.45);
+  font-family: 'Plus Jakarta Sans', 'Segoe UI', Arial, sans-serif;
+  font-size: 1rem;
+}
+
+.webmcp-annotation-legend-title {
+  margin: 0 0 10px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #cbd5e1;
+}
+
+.webmcp-annotation-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.webmcp-annotation-legend-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.webmcp-annotation-legend-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.webmcp-annotation-legend-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.webmcp-annotation-legend-index-container {
+  background: rgba(37, 99, 235, 0.98);
+}
+
+.webmcp-annotation-legend-index-element {
+  background: rgba(5, 150, 105, 0.98);
+}
+
+.webmcp-annotation-legend-item-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.35;
+}
+
+.webmcp-annotation-legend-node {
+  margin: 0 0 6px 34px;
+  font-size: 1rem;
+  line-height: 1.35;
+  color: #93c5fd;
+  overflow-wrap: anywhere;
+}
+
+.webmcp-annotation-legend-line {
+  margin-left: 34px;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: #e2e8f0;
+  overflow-wrap: anywhere;
+}
+
+.webmcp-annotation-legend-footer {
+  margin-top: 12px;
+  display: flex;
+}
+
+.webmcp-annotation-register-btn {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  #webmcp-annotation-legend {
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: 38vh;
+  }
+}
+
+
 @media (max-width: 520px) {
   #webmcp-floating-widget {
     right: 8px;
