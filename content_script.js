@@ -47,6 +47,14 @@ const TEXT_TAGS = new Set([
   'LI', 'DT', 'DD', 'SUMMARY', 'FIGCAPTION', 'BLOCKQUOTE', 'STRONG', 'EM', 'A'
 ]);
 
+function getExplicitLabel(el) {
+  if (!(el instanceof Element)) return '';
+  return el.getAttribute('aria-label') ||
+    el.getAttribute('title') ||
+    el.getAttribute('placeholder') ||
+    '';
+}
+
 function collapseWS(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
@@ -136,8 +144,10 @@ function getLabels(control) {
     const t = truncate(parent.textContent, 80);
     if (t && !out.includes(t)) out.push(t);
   }
-  const aria = control.getAttribute('aria-label');
-  if (aria) out.push(truncate(aria, 80));
+
+  const attrLabel = getExplicitLabel(control);
+  if (attrLabel) out.push(truncate(attrLabel, 80));
+
   return out;
 }
 
@@ -249,9 +259,9 @@ function getOptionLikeMeta(el) {
   const group = getOptionGroupContainer(target);
 
   const ownText = collapseWS(
+    getExplicitLabel(target) ||
     target.innerText ||
     target.textContent ||
-    target.getAttribute('aria-label') ||
     ''
   );
 
@@ -298,10 +308,7 @@ function buildCandidate(el, kind) {
     ? truncate(targetEl.innerText || targetEl.value || '', 120)
     : truncate(targetEl.innerText || targetEl.textContent || '', 200);
 
-  const labelText =
-    labels[0] ||
-    targetEl.getAttribute('aria-label') ||
-    targetEl.getAttribute('placeholder');
+  const labelText = labels[0] || getExplicitLabel(targetEl);
 
   const merged = collapseWS(
     rawText && labelText && rawText.toLowerCase() !== labelText.toLowerCase()
@@ -397,65 +404,6 @@ function buildDomSummary(wrapperEl) {
 
 // ─── AI ──────────────────────────────────────────────────────────────────────
 
-function getAiSchema() {
-  return {
-    type: 'OBJECT',
-    properties: {
-      container: {
-        type: 'OBJECT',
-        properties: {
-          xpath: {
-            type: 'STRING',
-            description: 'The exact XPath of the selected wrapper container.'
-          },
-          contentType: {
-            type: 'STRING',
-            description:
-              'The suggested type of the presented content based on the list of elements and a screenshot, e.g., "product card", "article", "profile", "listing item", "gallery", etc. This is a hint for WebMCP toolname generation and can be used in the future for auto-categorization of tools.'
-          },
-          toolname: {
-            type: 'STRING',
-            description:
-              'The semantic name of the WebMCP tool (e.g., "add-to-cart"). MUST be written in the exact same language as the webpage text.'
-          },
-          tooldescription: {
-            type: 'STRING',
-            description:
-              'Detailed explanation of what the tool does. MUST be written in the exact same language as the webpage text.'
-          }
-        },
-        required: ['xpath', 'contentType', 'toolname', 'tooldescription']
-      },
-      elements: {
-        type: 'ARRAY',
-        description:
-          'List of all relevant interactive elements found inside the container (inputs, dropdowns, radio groups, buttons).',
-        items: {
-          type: 'OBJECT',
-          properties: {
-            xpath: {
-              type: 'STRING',
-              description: 'The main XPath of the element or its group container from the input candidate list.'
-            },
-            toolparamtitle: {
-              type: 'STRING',
-              description:
-                'The visible label or title of the parameter. MUST be in the exact same language as the webpage.'
-            },
-            toolparamdescription: {
-              type: 'STRING',
-              description:
-                'Explanation of what this parameter controls. MUST be in the exact same language as the webpage.'
-            }
-          },
-          required: ['xpath', 'toolparamtitle', 'toolparamdescription']
-        }
-      }
-    },
-    required: ['container', 'elements']
-  };
-}
-
 function normalizeAiElementTarget(item) {
   if (!item?.xpath) return null;
 
@@ -492,131 +440,29 @@ function normalizeAiResultTargets(result) {
   };
 }
 
-function parseAiResponse(payload) {
-  const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('AI response was empty.');
-  const parsed = JSON.parse(text);
-  if (!parsed?.container || !Array.isArray(parsed.elements)) {
-    throw new Error('AI response is missing required fields.');
-  }
-  return parsed;
-}
-
-async function getAiSettings() {
-  const defaults = { settings_model: 'gemini-3.5-flash', settings_api_key: '' };
-  if (typeof chrome === 'undefined' || !chrome.storage?.local) return defaults;
-  return new Promise((resolve) =>
-    chrome.storage.local.get(['settings_model', 'settings_api_key'], (result) =>
-      resolve({
-        settings_model: result.settings_model || defaults.settings_model,
-        settings_api_key: result.settings_api_key || defaults.settings_api_key
-      })
-    )
-  );
-}
-
-function sanitizeBase64Image(data) {
-  return String(data || '').replace(/^data:[^,]+,/, '').trim();
-}
-
-async function readGeminiError(response) {
-  try {
-    const text = await response.text();
-    try {
-      const data = JSON.parse(text);
-      const message = data?.error?.message || data?.message;
-      return message
-        ? `AI API ${response.status}: ${message}`
-        : `AI API ${response.status}: ${JSON.stringify(data).slice(0, 400)}`;
-    } catch (_) {
-      return `AI API ${response.status}: ${text.slice(0, 400)}`;
-    }
-  } catch (_) {
-    return `AI API ${response.status}: request failed`;
-  }
-}
-
 async function callAi({ screenshot, payload }) {
-  const { settings_api_key: apiKey, settings_model: rawModel } = await getAiSettings();
-  if (!apiKey.trim()) throw new Error('Missing API key in Settings.');
-
-  const modelName = String(rawModel || '').replace(/^models\//, '').trim();
-  if (!modelName) throw new Error('Missing model name in Settings.');
-
-  const imageBase64 = sanitizeBase64Image(screenshot.base64);
-  if (!imageBase64) throw new Error('Prepared screenshot is empty.');
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{
-            text: [
-              'You generate a strict WebMCP Tool JSON for one interaction container. Map only actionable interactive controls.',
-              '',
-              'Rules:',
-              '- container.xpath: exactly copy input.containerXPath.',
-              '- container.contentType: short type like product_form, checkout_form, configurator.',
-              '- container.toolname: lowercase snake_case, action-based, in the webpage language.',
-              '- container.tooldescription: short action summary, in the webpage language.',
-              '',
-              '- elements[] must contain only interactive controls the agent can act on: input, button, select, textarea, actionable a, or explicitly interactive custom controls.',
-              '- Never output static text nodes or non-interactive structural elements as parameters.',
-              '- Never use li, ul, ol, div, span, label, p, section, article as element xpath unless that exact node is itself interactive via role, tabindex, onclick, aria-pressed, aria-selected, or equivalent semantics.',
-              '- CRITICAL EXCEPTION: Product variants (size/color chips) and fulfillment selectors (delivery vs pickup options) are often built using generic tags (div, span, label, li) or anchor links with distinct URLs. If a node visually acts as an option-select control, YOU MUST map its closest clickable element (like the `a` tag or toggle container), even if it triggers navigation or lacks standard ARIA attributes.',
-              '- If text is inside a li or wrapper but the real clickable target is a descendant a/button/input/custom control, output the descendant interactive xpath, not the wrapper xpath.',
-              '',
-              '- Product Form Strategy: Systematically scan for and map: 1. All product variants (Size/Medidas, Color chips), 2. Main fulfillment toggles (Delivery vs Click & Collect choices), 3. Quantity input, 4. Primary execution control (Add to cart).',
-              '- CRITICAL FOR VARIANTS: Product variants are frequently structured as individual `a` tags with distinct URLs or product IDs in the `href`. You MUST treat them as state-changing interactive controls, NOT generic navigation. Look closely for class names containing \'variant\' (e.g., \'variant-selection__btn\') or HTML attributes like `data-product-variant-name`. Extract EVERY individual option choice.',
-              '- When mapping delivery or fulfillment options, prioritize the element that activates the option itself (the radio input or the clickable option container) over secondary informational buttons inside that section.',
-              '- Ignore informational text, carousels, wishlist, share, and generic external navigation that does not change the current product configuration or purchase flow.',
-              '- Collapse plus/minus steppers into the single numeric input they modify.',
-              '',
-              'For each element object:',
-              '- xpath: exact xpath of the final actionable interactive node.',
-              '- toolparamtitle: short human-readable parameter title in the webpage language. For variant chips/links, extract ONLY the specific option value text (e.g., "200 x 104 x 1,8 cm"), ignoring any hidden text, error messages, or tooltips inside the container.',
-              '- toolparamdescription: short description of what state it changes or what action it executes, in the webpage language.',
-              '- If multiple controls belong to one option group, output each actionable control separately with consistent naming.',
-              '',
-              'Output valid JSON only.'
-            ].join('\\n')
-          }]
-        },
-        contents: [{
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: screenshot.imageMimeType,
-                data: imageBase64
-              }
-            },
-            {
-              text: [
-                '# Task',
-                'Analyze the selected wrapper using the screenshot and DOM candidate list.',
-                '',
-                '# Input payload',
-                JSON.stringify(payload, null, 2)
-              ].join('\n')
-            }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: getAiSchema(),
-          temperature: 0.2
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { action: 'runAiAnalysis', screenshot, payload },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
         }
-      })
-    }
-  );
-
-  if (!response.ok) throw new Error(await readGeminiError(response));
-  const aiResult = parseAiResponse(await response.json());
-  return normalizeAiResultTargets(aiResult);
+        if (!response || response.success === false) {
+          reject(new Error(response?.error || 'Unknown background error during AI analysis.'));
+          return;
+        }
+        try {
+          // Возвращаем результат, прогнав его через DOM-зависимый нормализатор
+          const normalized = normalizeAiResultTargets(response.result);
+          resolve(normalized);
+        } catch (err) {
+          reject(err);
+        }
+      }
+    );
+  });
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -657,6 +503,11 @@ let widgetPreviewBtn = null;
 let widgetClearBtn = null;
 let dragState = null;
 let widgetResizeHandlerInstalled = false;
+let widgetCollapsed = true;
+let widgetCollapseBtn = null;
+let widgetBody = null;
+const WIDGET_TOP_OFFSET = 16;
+const WIDGET_RIGHT_OFFSET = 36;
 
 // ─── Annotation state ────────────────────────────────────────────────────────
 
@@ -1777,7 +1628,14 @@ async function runAiAnalysis() {
   clearActiveSessionMemoryOnly();
   setResultText('');
   updateActionButtons();
-  showStatusLine('Running AI…');
+
+  const modelLabel = await new Promise((resolve) => {
+    chrome.storage.local.get(['settings_model'], (result) => {
+      const raw = String(result.settings_model || 'gemini-3.5-flash');
+      resolve(raw.replace(/^models\//, '').trim());
+    });
+  });
+  showStatusLine(`Running AI with ${modelLabel}…`);
 
   try {
     const result = await callAi({ screenshot: lastScreenshot, payload: lastDomPayload });
@@ -1809,10 +1667,11 @@ function setWidgetPos(left, top) {
 
 function handleWidgetResize() {
   if (!widgetRoot || !document.contains(widgetRoot)) return;
-  const r = widgetRoot.getBoundingClientRect();
-  setWidgetPos(r.left, r.top);
+  requestAnimationFrame(() => {
+    const width = widgetRoot.offsetWidth || 340;
+    setWidgetPos(window.innerWidth - width - WIDGET_RIGHT_OFFSET, WIDGET_TOP_OFFSET);
+  });
 }
-
 function ensureWidget() {
   if (!IS_TOP_WINDOW) return null;
   if (widgetRoot && document.contains(widgetRoot)) return widgetRoot;
@@ -1839,7 +1698,14 @@ function ensureWidget() {
   dragHint.textContent = 'Drag';
   dragHint.className = 'webmcp-drag-hint';
 
-  header.append(titleEl, widgetClearBtn, dragHint);
+  widgetCollapseBtn = document.createElement('button');
+  widgetCollapseBtn.type = 'button';
+  widgetCollapseBtn.className = 'webmcp-btn-collapse';
+  widgetCollapseBtn.setAttribute('aria-label', 'Collapse widget');
+  widgetCollapseBtn.setAttribute('title', 'Collapse widget');
+  widgetCollapseBtn.textContent = '−';
+
+  header.append(titleEl, widgetClearBtn, dragHint, widgetCollapseBtn);
 
   const widgetInstructions = document.createElement('div');
   widgetInstructions.className = 'webmcp-widget-instructions';
@@ -1939,7 +1805,9 @@ function ensureWidget() {
 
   widgetResultSection.append(resultTitle, widgetResultWrap);
 
-  widgetRoot.append(
+  widgetBody = document.createElement('div');
+  widgetBody.className = 'webmcp-widget-body';
+  widgetBody.append(
     header,
     widgetInstructions,
     controls,
@@ -1949,9 +1817,81 @@ function ensureWidget() {
     widgetPayloadSection,
     widgetResultSection
   );
+  widgetRoot.appendChild(widgetBody);
+
+  const collapsedBadge = document.createElement('button');
+  collapsedBadge.type = 'button';
+  collapsedBadge.className = 'webmcp-collapsed-badge';
+
+  const badgeIcon = document.createElement('div');
+  badgeIcon.role = 'image';
+  badgeIcon.alt = 'WebMCP Annotator icon';
+  badgeIcon.className = 'webmcp-badge-icon';
+  badgeIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20">
+  <defs>
+    <linearGradient id="webMCPGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F2FE" />
+      <stop offset="100%" stop-color="#4FACFE" />
+    </linearGradient>
+  </defs>
+  <path d="M 38 22 L 20 22 L 20 106 L 38 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 90 22 L 108 22 L 108 106 L 90 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 64 28 Q 64 64 28 64 Q 64 64 64 100 Q 64 64 100 64 Q 64 64 64 28 Z" fill="#00F2FE" />
+  <circle cx="64" cy="64" r="6" fill="#FFFFFF" />
+</svg>
+`;
+
+  const badgeLabel = document.createElement('span');
+  badgeLabel.className = 'webmcp-badge-label';
+  badgeLabel.textContent = 'Open WebMCP Annotator';
+
+  collapsedBadge.append(badgeIcon, badgeLabel);
+  widgetRoot.appendChild(collapsedBadge);
 
   const mountTarget = document.body || document.documentElement;
   mountTarget.appendChild(widgetRoot);
+
+  // ── Collapse / expand logic ──────────────────────────────────────────────────
+
+  function pinWidgetTopRight() {
+    setWidgetPos(
+      window.innerWidth - widgetRoot.offsetWidth - WIDGET_RIGHT_OFFSET,
+      WIDGET_TOP_OFFSET
+    );
+  }
+
+  function applyCollapseState() {
+    if (widgetCollapsed) {
+      widgetBody.classList.add('webmcp-hidden');
+      collapsedBadge.classList.remove('webmcp-hidden');
+      widgetRoot.classList.add('webmcp-is-collapsed');
+    } else {
+      widgetBody.classList.remove('webmcp-hidden');
+      collapsedBadge.classList.add('webmcp-hidden');
+      widgetRoot.classList.remove('webmcp-is-collapsed');
+    }
+  }
+
+  widgetCollapseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    widgetCollapsed = true;
+    applyCollapseState();
+
+    requestAnimationFrame(() => {
+      pinWidgetTopRight();
+    });
+  });
+
+  collapsedBadge.addEventListener('click', () => {
+    widgetCollapsed = false;
+    applyCollapseState();
+
+    requestAnimationFrame(() => {
+      pinWidgetTopRight();
+    });
+  });
+
+  applyCollapseState();
 
   const beginDrag = (e) => {
     if (!widgetRoot || e.button !== 0) return;
@@ -2001,7 +1941,9 @@ function ensureWidget() {
   }
 
   widgetRoot.classList.remove('webmcp-hidden');
-  setWidgetPos(window.innerWidth - 380, 16);
+  requestAnimationFrame(() => {
+    pinWidgetTopRight();
+  });
   updateSelectionText();
 
   if (lastAiResult) {

@@ -1,11 +1,16 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-  --webmcp-annotation-anchor-layer: 2147483620; /* рамки аннотаций */
-  --webmcp-picker-layer: 2147483630;            /* picker overlay */
-  --webmcp-picker-label-layer: 2147483631;        /* picker label */
-  --webmcp-annotation-panel-layer: 2147483640;  /* legend */
-  --webmcp-widget-layer: 2147483647;            /* floating widget */
+  --webmcp-annotation-anchor-layer: 2147483620;
+  /* рамки аннотаций */
+  --webmcp-picker-layer: 2147483630;
+  /* picker overlay */
+  --webmcp-picker-label-layer: 2147483631;
+  /* picker label */
+  --webmcp-annotation-panel-layer: 2147483640;
+  /* legend */
+  --webmcp-widget-layer: 2147483647;
+  /* floating widget */
 }
 
 #webmcp-floating-widget {
@@ -27,8 +32,8 @@
   position: fixed;
   top: 16px;
   left: auto;
-  right: 16px;
-  bottom: 16px;
+  right: 36px;
+  bottom: auto;
   width: 340px;
   max-width: calc(100vw - 32px);
   max-height: 70vh;
@@ -85,7 +90,8 @@ body.webmcp-picking-cursor {
   cursor: grabbing;
 }
 
-.webmcp-widget-title, .webmcp-annotation-legend-title {
+.webmcp-widget-title,
+.webmcp-annotation-legend-title {
   font-size: 1.2rem;
   font-weight: 700;
 }
@@ -103,7 +109,7 @@ body.webmcp-picking-cursor {
   margin-bottom: 8px;
 }
 
-.webmcp-widget-controls > .webmcp-btn {
+.webmcp-widget-controls>.webmcp-btn {
   flex: 1 1 0;
   min-width: 0;
 }
@@ -160,7 +166,7 @@ body.webmcp-picking-cursor {
 
 .webmcp-btn-clear {
   padding: 5px 10px;
-	min-height: 20px;
+  min-height: 20px;
   background: var(--webmcp-btn-primary);
   max-width: 65px;
 }
@@ -212,8 +218,8 @@ body.webmcp-picking-cursor {
   position: relative;
 }
 
-.webmcp-copyable > .webmcp-widget-selection,
-.webmcp-copyable > .webmcp-widget-code {
+.webmcp-copyable>.webmcp-widget-selection,
+.webmcp-copyable>.webmcp-widget-code {
   padding-right: 64px;
 }
 
@@ -309,7 +315,7 @@ body.webmcp-picking-cursor {
 }
 
 .webmcp-annotation-box {
-  position: fixed;           
+  position: fixed;
   pointer-events: none;
   border-radius: 6px;
   box-sizing: border-box;
@@ -367,10 +373,10 @@ body.webmcp-picking-cursor {
   right: auto;
   bottom: auto;
   width: min(420px, calc(100vw - 32px));
-  max-height: min(85vh, 900px);   
-  min-height: 120px;              
-  overflow: hidden;               
-  resize: vertical; 
+  max-height: min(85vh, 900px);
+  min-height: 120px;
+  overflow: hidden;
+  resize: vertical;
   z-index: var(--webmcp-annotation-panel-layer);
   border: 1px solid var(--webmcp-card-border);
   border-radius: 12px;
@@ -416,7 +422,7 @@ body.webmcp-picking-cursor {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow-y: auto;      
+  overflow-y: auto;
   max-height: calc(100% - 42px);
 }
 
@@ -494,19 +500,124 @@ body.webmcp-picking-cursor {
 }
 
 @media (max-width: 520px) {
-  #webmcp-floating-widget {
-    right: 8px;
-    left: 8px;
-    bottom: 8px;
-    width: auto;
-    max-width: none;
-    max-height: calc(100vh - 16px);
-  }
+#webmcp-floating-widget {
+  top: 8px;
+  right: 8px;
+  left: auto;
+  bottom: auto;
+  width: min(340px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+}
 }
 
 @media (prefers-contrast: more) {
   #webmcp-floating-widget {
     --webmcp-card-border: rgba(241, 245, 249, 0.62);
     --webmcp-input-focus-border: #bfdbfe;
+  }
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Collapsed / expanded widget state
+   ────────────────────────────────────────────────────────────────────────── */
+
+.webmcp-widget-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#webmcp-floating-widget.webmcp-is-collapsed {
+  width: auto;
+  max-width: calc(100vw - 32px);
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.webmcp-collapsed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 14px;
+  border: 1px solid var(--webmcp-card-border);
+  border-radius: 999px;
+  background: var(--webmcp-bg-gradient);
+  color: var(--webmcp-text-primary);
+  font-family: 'Plus Jakarta Sans', 'Segoe UI', Arial, sans-serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.45);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+  white-space: nowrap;
+}
+
+.webmcp-collapsed-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 36px rgba(2, 6, 23, 0.52);
+  border-color: rgba(191, 219, 254, 0.42);
+}
+
+.webmcp-collapsed-badge:focus-visible {
+  outline: 2px solid var(--webmcp-input-focus-border);
+  outline-offset: 2px;
+}
+
+.webmcp-badge-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  object-fit: contain;
+}
+
+.webmcp-badge-label {
+  display: inline-block;
+  color: var(--webmcp-text-primary);
+  letter-spacing: 0.01em;
+}
+
+.webmcp-btn-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 20px;
+  max-width: 30px;
+  margin-left: auto;
+  padding: 5px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: var(--webmcp-btn-primary);
+  color: var(--webmcp-text-primary);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+
+#webmcp-floating-widget.webmcp-is-collapsed .webmcp-widget-header {
+  margin-bottom: 0;
+}
+
+@media (max-width: 520px) {
+  #webmcp-floating-widget.webmcp-is-collapsed {
+    top: 8px;
+    left: auto;
+    right: 8px;
+    bottom: auto;
+    width: auto;
+    max-width: calc(100vw - 16px);
   }
 }

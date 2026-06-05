@@ -10,7 +10,6 @@
 
   <header class="header">
     <h1>SuperGadget Store</h1>
-    <!-- Mock Search Form -->
     <div class="search-box">
       <form action="/search" method="GET" role="search" aria-label="Product search">
         <div class="search-row">
@@ -22,8 +21,6 @@
   </header>
 
   <main>
-
-  <!-- Product 1: Standard Form-based Add to Cart -->
   <section class="product-card" aria-labelledby="product-1-name">
     <h2 id="product-1-name">Product 1: Ultimate Wireless Headphones</h2>
     <p>Premium noise-canceling headphones with 40-hour battery life.</p>
@@ -46,41 +43,6 @@
       <input type="submit" value="Add to Bag">
     </form>
   </section>
-
-  <!-- Product 2: Standalone JS-based Add to Cart (No form tag) -->
-  <section class="product-card" aria-labelledby="product-2-name">
-    <h2 id="product-2-name">Product 2: Smartwatch Active Pro</h2>
-    <p>Track your workouts, heart rate, and notifications in real-time.</p>
-    
-    <div class="product-selection-js">
-      <div class="form-group">
-        <label for="js-variant">Select Size</label>
-        <select name="variant_id" id="js-variant">
-          <option value="4401">40mm Sport Edition - $199.99</option>
-          <option value="4402">44mm Sport Edition - $229.99</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label for="js-qty">Quantity</label>
-        <input type="number" id="js-qty" name="qty" value="1" min="1">
-      </div>
-
-      <!-- Isolated button -->
-      <button type="button" id="add-to-cart-js-btn">
-        Add to Cart
-      </button>
-    </div>
-  </section>
-
   </main>
-
-  <script>
-    const jsAddButton = document.getElementById('add-to-cart-js-btn');
-    jsAddButton?.addEventListener('click', () => {
-      alert('JS-driven add-to-cart triggered!');
-    });
-  </script>
-
 </body>
 </html>
