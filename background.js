@@ -52,36 +52,23 @@ async function handleAiAnalysis(request) {
         systemInstruction: {
           parts: [{
             text: [
-              'You generate a strict WebMCP Tool JSON for one interaction container. Map only actionable interactive controls.',
+              'You are an expert DOM and UI analyzer. Your task is to extract interactive elements from a given UI container into a WebMCP Tool specification.',
               '',
-              'Rules:',
-              '- container.xpath: exactly copy input.containerXPath.',
-              '- container.contentType: short type like product_form, checkout_form, configurator.',
-              '- container.toolname: lowercase snake_case, action-based, in the webpage language.',
-              '- container.tooldescription: short action summary, in the webpage language.',
+              'CRITICAL RULES:',
+              '1. STRICT LANGUAGE: All generated textual values (titles, descriptions, toolnames) MUST strictly match the primary language of the provided screenshot/UI. No translations.',
+              '2. RAW JSON ONLY: Return pure JSON. Do not wrap the output in ```json markdown blocks. No comments, no extra characters.',
               '',
-              '- elements[] must contain only interactive controls the agent can act on: input, button, select, textarea, actionable a, or explicitly interactive custom controls.',
-              '- Make sure to compare the candidate element with the screenshot to confirm they are correspond to interactive controls.',
-              '- Never output Informational buttons, links, or toggles that do not directly change the product configuration or execute a purchase-related action.',
-              '- Never use li, ul, ol, div, span, label, p, section, article as element xpath unless that exact node is itself  via role, tabindex, onclick, aria-pressed, aria-selected, or equivalent semantics.',
-              '- CRITICAL EXCEPTION: Product variants (size/color chips) and fulfillment selectors (delivery vs pickup options) are often built using generic tags (div, span, label, li) or anchor links with distinct URLs. If a node visually acts as an option-select control, YOU MUST map its closest clickable element (like the `a` tag or toggle container), even if it triggers navigation or lacks standard ARIA attributes.',
-              '- If text is inside a li or wrapper but the real clickable target is a descendant a/button/input/custom control, output the descendant interactive xpath, not the wrapper xpath.',
-              '- NEVER annotate submit buttons (e.g., tags with type="submit", input[type="submit"], or primary CTA buttons that execute the form) with toolparamtitle or toolparamdescription. Action execution triggers are NOT parameters. The execution action is defined by the containers toolname.',
-              '',
-              '- Product Form Strategy: Systematically scan for and map: 1. All product variants (Size/Medidas, Color chips), 2. Main fulfillment toggles (Delivery vs Click & Collect choices), 3. Quantity input, 4. Primary execution control (Add to cart).',
-              '- CRITICAL FOR VARIANTS: Product variants are frequently structured as individual `a` tags with distinct URLs or product IDs in the `href`. You MUST treat them as state-changing interactive controls, NOT generic navigation. Look closely for class names containing \'variant\' (e.g., \'variant-selection__btn\') or HTML attributes like `data-product-variant-name`. Extract EVERY individual option choice.',
-              '- When mapping delivery or fulfillment options, prioritize the element that activates the option itself (the radio input or the clickable option container) over secondary informational buttons inside that section.',
-              '- Ignore informational text, carousels, wishlist, share, and generic external navigation that does not change the current product configuration or purchase flow.',
-              '- Collapse plus/minus steppers into the single numeric input they modify.',
-              '',
-              'For each element object:',
-              '- xpath: exact xpath of the final actionable interactive node.',
-              '- toolparamtitle: short human-readable parameter title in the webpage language. For variant chips/links, extract ONLY the specific option value text (e.g., "200 x 104 x 1,8 cm"), ignoring any hidden text, error messages, or tooltips inside the container.',
-              '- toolparamdescription: short description of what state it changes or what action it executes, in the webpage language.',
-              '- If multiple controls belong to one option group, output each actionable control separately with consistent naming.',
-              '',
-              'Output valid JSON only.'
-            ].join('\\n')
+              'ANALYSIS LOGIC:',
+            '- Component Agnostic: Analyze the UI to determine the primary intent of the container (e.g., search, config, filter, add-to-cart form).',
+            '- Naming Priority: Derive container.toolname from the main execution button (e.g., "submit", "search", "add_to_cart").',
+            '- Submit/Execution Button Rule (CRITICAL): The primary submit/execution button is NOT a tool parameter and MUST NOT be included in elements. Use it only to derive container.toolname and to determine container.toolautosubmit.',
+            '- Strict Scope: Only include elements that act as DIRECT INPUTS for the primary intent.',
+            '- Functional Exclusion (CRITICAL): If an interactive element initiates a NEW action (e.g., opening a new page, navigating to a detail view, selecting a category/genre that leads away from the tool), it is NOT a parameter. EXCLUDE IT.',
+            '- Element Selection: Map only controls that modify the container\'s state locally (e.g., inputs, checkboxes, color switches).',
+            '- Visual Inference: Infer labels for icons/buttons only if they serve the primary intent.',
+            '- Group Unpacking: Unpack local state options (e.g., color variants), but never unpack navigation/content lists.',
+            '- Exclusions: Exclude all navigation links, content recommendations, genre/title lists, and static informational text.'
+            ].join('\n')
           }]
         },
         contents: [{
@@ -107,14 +94,14 @@ async function handleAiAnalysis(request) {
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: getAiSchema(),
-          temperature: 0.2
+          temperature: 0.1 // Снизила температуру до 0.1 для большей стабильности и предсказуемости JSON
         }
       })
     }
   );
 
   if (!response.ok) throw new Error(await readGeminiError(response));
-  
+
   const resJson = await response.json();
   const resText = resJson?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!resText) throw new Error('AI response was empty.');
@@ -133,22 +120,47 @@ function getAiSchema() {
       container: {
         type: 'OBJECT',
         properties: {
-          xpath: { type: 'STRING', description: 'The exact XPath of the selected wrapper container.' },
-          contentType: { type: 'STRING', description: 'The suggested type of the presented content based on the list of elements and a screenshot, e.g., "product card", "article", "profile", "listing item", "gallery", etc. This is a hint for WebMCP toolname generation and can be used in the future for auto-categorization of tools.' },
-          toolname: { type: 'STRING', description: 'The semantic name of the WebMCP tool (e.g., "add-to-cart"). MUST be written in the exact same language as the webpage text.' },
-          tooldescription: { type: 'STRING', description: 'Detailed explanation of what the tool does. MUST be written in the exact same language as the webpage text.' }
+          xpath: {
+            type: 'STRING',
+            description: 'The exact XPath matching the provided input.containerXPath boundary.'
+          },
+          contentType: {
+            type: 'STRING',
+            description: 'Short functional classification of the widget (e.g., "product_configurator", "media_player", "filter_sidebar").'
+          },
+          toolname: {
+            type: 'STRING',
+            description: 'Lowercase snake_case name. STRICT PRIORITY: Derive this directly from the exact visible text of the primary submit/execution button (e.g., "add_to_cart"). Only invent a name if no primary button exists.'
+          },
+          tooldescription: {
+            type: 'STRING',
+            description: 'Short summary of what the entire tool accomplishes.'
+          },
+          toolautosubmit: {
+            type: 'BOOLEAN',
+            description: 'True if interacting with parameters immediately applies changes/updates state without needing a separate submit click.'
+          }
         },
-        required: ['xpath', 'contentType', 'toolname', 'tooldescription']
+        required: ['xpath', 'contentType', 'toolname', 'tooldescription', 'toolautosubmit']
       },
       elements: {
         type: 'ARRAY',
-        description: 'List of all relevant interactive elements found inside the container (inputs, dropdowns, radio groups, buttons).',
+        description: 'List of actionable interactive parameters found strictly inside the container. Do not include submit/execution elements',
         items: {
           type: 'OBJECT',
           properties: {
-            xpath: { type: 'STRING', description: 'The main XPath of the element or its group container from the input candidate list.' },
-            toolparamtitle: { type: 'STRING', description: 'The visible label or title of the parameter. MUST be in the exact same language as the webpage.' },
-            toolparamdescription: { type: 'STRING', description: 'Explanation of what this parameter controls. MUST be in the exact same language as the webpage.' }
+            xpath: {
+              type: 'STRING',
+              description: 'The precise XPath of the actionable node. If wrapped, target the deepest real clickable element.'
+            },
+            toolparamtitle: {
+              type: 'STRING',
+              description: 'The visible label text. If text is missing in the DOM, infer the semantic name visually from the screenshot (e.g., "search", "close").'
+            },
+            toolparamdescription: {
+              type: 'STRING',
+              description: 'Explanation of what data or state this specific parameter controls.'
+            }
           },
           required: ['xpath', 'toolparamtitle', 'toolparamdescription']
         }
@@ -270,7 +282,7 @@ async function convertCanvasToOptimizedBlob(canvas) {
       if (blob?.size > 0) {
         return { blob, mimeType: option.type };
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   const blob = await canvas.convertToBlob({ type: 'image/png' });

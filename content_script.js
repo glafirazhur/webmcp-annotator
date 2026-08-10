@@ -506,6 +506,13 @@ let widgetResizeHandlerInstalled = false;
 let widgetCollapsed = true;
 let widgetCollapseBtn = null;
 let widgetBody = null;
+let webmcpHost = null;
+let webmcpShadow = null;
+let widgetMount = null;
+let overlayMount = null;
+let legendMount = null;
+let widgetLauncher = null;
+let widgetLauncherLabel = null;
 const WIDGET_TOP_OFFSET = 16;
 const WIDGET_RIGHT_OFFSET = 36;
 
@@ -522,6 +529,8 @@ let annotationLegendDragState = null;
 let annotationNodes = [];
 let _anchorSeq = 0;
 let annotationLegendResizeHandlerInstalled = false;
+let annotationSyncRaf = 0;
+let annotationViewportSyncInstalled = false;
 
 // ─── Persistent inject state ─────────────────────────────────────────────────
 
@@ -594,48 +603,66 @@ function makeParamKey(item, el, index) {
   return fromTitle || `param_${index + 1}`;
 }
 
-function shouldEnableAutoSubmit(result) {
-  return (result?.elements || []).some((item) => {
-    const text = collapseWS(`${item.toolparamtitle || ''} ${item.toolparamdescription || ''}`).toLowerCase();
-    return ['add to cart', 'añadir al carrito', 'carrito', 'comprar', 'checkout', 'buy']
-      .some((kw) => text.includes(kw));
-  });
-}
-
 function resolveWebMcpToolHost(result) {
-  const containerEl = getElementByXPath(result?.container?.xpath);
-  if (!containerEl) return null;
+  const originalWrapper =
+    selectedWrapperEl instanceof Element
+      ? selectedWrapperEl
+      : getElementByXPath(selectedWrapperXPath);
 
-  if (containerEl.tagName === 'FORM') return containerEl;
+  if (!(originalWrapper instanceof Element)) return null;
 
-  const nestedForm = containerEl.querySelector('form');
-  if (nestedForm) return nestedForm;
+  const domElements = (result?.elements || [])
+    .map((item) => getElementByXPath(item?.xpath))
+    .map((el) => resolveInteractiveTarget(el) || el)
+    .filter((el) => el instanceof Element && originalWrapper.contains(el));
 
-  for (const item of result?.elements || []) {
-    const form = getElementByXPath(item.xpath)?.closest?.('form');
-    if (form) return form;
+  if (domElements.length === 0) {
+    return originalWrapper;
   }
-  return null;
+
+  const forms = Array.from(originalWrapper.querySelectorAll('form'));
+  for (const form of forms) {
+    if (domElements.every((el) => form.contains(el))) {
+      return form;
+    }
+  }
+
+  let lca = domElements[0];
+  for (let i = 1; i < domElements.length; i++) {
+    while (lca && !lca.contains(domElements[i])) {
+      lca = lca.parentElement;
+    }
+  }
+
+  if (!(lca instanceof Element) || !originalWrapper.contains(lca)) {
+    return originalWrapper;
+  }
+
+  let best = lca;
+  while (best && best !== originalWrapper) {
+    if (best.tagName === 'DIV') {
+      return best;
+    }
+    best = best.parentElement;
+  }
+
+  return originalWrapper;
 }
 
 function resolveToolContext(result) {
   const containerEl = getElementByXPath(result?.container?.xpath);
   const toolHost = resolveWebMcpToolHost(result);
-  const normalizedToolName = normalizeToolName(result?.container?.toolname || '');
+  const normalizedToolName = normalizeToolName(result?.container?.toolname);
+
   return { containerEl, toolHost, normalizedToolName };
 }
 
 function applyToolMetadata(host, result, normalizedToolName) {
-  if (!(host instanceof HTMLFormElement)) return false;
+  if (!(host instanceof Element)) return false;
 
   setWebMcpAttribute(host, WEBMCP_ATTRS.toolName, normalizedToolName);
   setWebMcpAttribute(host, WEBMCP_ATTRS.toolDescription, result?.container?.tooldescription || '');
-
-  if (shouldEnableAutoSubmit(result)) {
-    setWebMcpAttribute(host, WEBMCP_ATTRS.toolAutoSubmit, 'true');
-  } else {
-    host.removeAttribute(WEBMCP_ATTRS.toolAutoSubmit);
-  }
+  setWebMcpAttribute(host, WEBMCP_ATTRS.toolAutoSubmit, "true");
 
   return true;
 }
@@ -665,12 +692,59 @@ function setActiveSessionFromResult(result, { annotationsVisible: visible = fals
 
 // ─── Annotation overlay ──────────────────────────────────────────────────────
 
+function ensureShadowRoot() {
+  if (webmcpShadow && webmcpHost && webmcpHost.isConnected) return webmcpShadow;
+
+  webmcpHost = document.createElement('div');
+  webmcpHost.id = 'webmcp-shadow-host';
+  webmcpHost.style.position = 'fixed';
+  webmcpHost.style.inset = '0';
+  webmcpHost.style.pointerEvents = 'none';
+  webmcpHost.style.zIndex = '2147483647';
+  webmcpHost.style.background = 'transparent';
+
+  (document.documentElement || document.body || document).appendChild(webmcpHost);
+
+  webmcpShadow = webmcpHost.attachShadow({ mode: 'open' });
+
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = chrome.runtime.getURL('widget.css');
+
+  const root = document.createElement('div');
+  root.id = 'webmcp-shadow-root';
+  root.innerHTML = `
+    <div id="webmcp-overlay-mount"></div>
+    <div id="webmcp-legend-mount"></div>
+    <div id="webmcp-widget-mount"></div>
+  `;
+
+  webmcpShadow.append(link, root);
+
+  widgetMount = root.querySelector('#webmcp-widget-mount');
+  overlayMount = root.querySelector('#webmcp-overlay-mount');
+  legendMount = root.querySelector('#webmcp-legend-mount');
+
+  overlayMount.style.pointerEvents = 'none';
+  widgetMount.style.pointerEvents = 'none';
+  legendMount.style.pointerEvents = 'none';
+
+  return webmcpShadow;
+}
+
+function isInShadowUi(node) {
+  if (!(node instanceof Node)) return false;
+  const root = node.getRootNode?.();
+  return Boolean(root && webmcpShadow && root === webmcpShadow);
+}
+
+
 function ensureAnnotationLayer() {
   if (annotationLayer && document.contains(annotationLayer)) return annotationLayer;
   annotationLayer = document.createElement('div');
   annotationLayer.id = 'webmcp-annotation-layer';
   annotationLayer.setAttribute('data-webmcp-annotation-layer', 'true');
-  document.documentElement.appendChild(annotationLayer);
+  overlayMount.appendChild(annotationLayer);
   return annotationLayer;
 }
 
@@ -688,18 +762,20 @@ function setAnnotationLegendPos(left, top) {
 }
 
 function handleAnnotationLegendResize() {
-  if (!annotationLegend || !document.contains(annotationLegend)) return;
+  if (!annotationLegend || !annotationLegend.isConnected) return;
   const r = annotationLegend.getBoundingClientRect();
   setAnnotationLegendPos(r.left, r.top);
 }
 
 function ensureAnnotationLegend() {
-  if (annotationLegend && document.contains(annotationLegend)) return annotationLegend;
+  ensureShadowRoot();
+  if (annotationLegend && annotationLegend.isConnected) return annotationLegend;
 
   annotationLegend = document.createElement('aside');
   annotationLegend.id = 'webmcp-annotation-legend';
   annotationLegend.setAttribute('data-webmcp-annotation-legend', 'true');
   annotationLegend.setAttribute('aria-label', 'WebMCP annotation legend');
+  annotationLayer.style.pointerEvents = 'none';
 
   const header = document.createElement('div');
   header.className = 'webmcp-annotation-legend-header';
@@ -717,27 +793,51 @@ function ensureAnnotationLegend() {
 
   header.append(titleEl, dragHint);
   annotationLegend.append(header, annotationLegendList);
-  document.body.appendChild(annotationLegend);
+  legendMount.appendChild(annotationLegend);
+
+  annotationLegend.style.pointerEvents = 'auto';
 
   annotationLegendHeader = header;
   annotationLegendDragHint = dragHint;
 
+  let annotationLegendDragRaf = 0;
+
+  function flushAnnotationLegendDrag() {
+    annotationLegendDragRaf = 0;
+    if (!annotationLegendDragState || !annotationLegend) return;
+
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - annotationLegendDragState.width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - annotationLegendDragState.height - margin);
+
+    const clampedLeft = Math.min(Math.max(annotationLegendDragState.nextLeft, margin), maxLeft);
+    const clampedTop = Math.min(Math.max(annotationLegendDragState.nextTop, margin), maxTop);
+
+    annotationLegend.style.left = `${clampedLeft}px`;
+    annotationLegend.style.top = `${clampedTop}px`;
+    annotationLegend.style.right = "auto";
+    annotationLegend.style.bottom = "auto";
+  }
+
   const beginDrag = (e) => {
     if (!annotationLegend || e.button !== 0) return;
-    if (e.target.closest('button, input, select, textarea, label, a')) return;
+    if (e.target.closest("button, input, select, textarea, label, a")) return;
 
     const rect = annotationLegend.getBoundingClientRect();
-    setAnnotationLegendPos(rect.left, rect.top);
 
     annotationLegendDragState = {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       left: rect.left,
-      top: rect.top
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      nextLeft: rect.left,
+      nextTop: rect.top
     };
 
-    header.classList.add('is-dragging');
+    header.classList.add("is-dragging");
     header.setPointerCapture(e.pointerId);
     e.preventDefault();
   };
@@ -745,10 +845,12 @@ function ensureAnnotationLegend() {
   const onDragMove = (e) => {
     if (!annotationLegendDragState || e.pointerId !== annotationLegendDragState.pointerId) return;
 
-    setAnnotationLegendPos(
-      annotationLegendDragState.left + e.clientX - annotationLegendDragState.startX,
-      annotationLegendDragState.top + e.clientY - annotationLegendDragState.startY
-    );
+    annotationLegendDragState.nextLeft = annotationLegendDragState.left + (e.clientX - annotationLegendDragState.startX);
+    annotationLegendDragState.nextTop = annotationLegendDragState.top + (e.clientY - annotationLegendDragState.startY);
+
+    if (!annotationLegendDragRaf) {
+      annotationLegendDragRaf = requestAnimationFrame(flushAnnotationLegendDrag);
+    }
   };
 
   const endDrag = (e) => {
@@ -756,10 +858,16 @@ function ensureAnnotationLegend() {
 
     try {
       header.releasePointerCapture(e.pointerId);
-    } catch (_) { }
+    } catch { }
 
+    if (annotationLegendDragRaf) {
+      cancelAnimationFrame(annotationLegendDragRaf);
+      annotationLegendDragRaf = 0;
+    }
+
+    flushAnnotationLegendDrag();
     annotationLegendDragState = null;
-    header.classList.remove('is-dragging');
+    header.classList.remove("is-dragging");
   };
 
   header.addEventListener('pointerdown', beginDrag);
@@ -777,6 +885,11 @@ function ensureAnnotationLegend() {
 }
 
 function destroyAnnotationUI() {
+  if (annotationSyncRaf) {
+    cancelAnimationFrame(annotationSyncRaf);
+    annotationSyncRaf = 0;
+  }
+
   annotationLegendHeader = null;
   annotationLegendDragHint = null;
   annotationLegendDragState = null;
@@ -809,23 +922,28 @@ function clearInjectedMarkup() {
   markupInjected = false;
 }
 
-function makeAnnotationBox({ targetEl, className, index, tone = 'element' } = {}) {
+function makeAnnotationBox({
+  targetEl,
+  className,
+  index,
+  tone = 'element',
+  expand = 0
+} = {}) {
   if (!(targetEl instanceof Element)) return null;
 
-  const anchorId = `--webmcp-a${++_anchorSeq}`;
-  targetEl.style.anchorName = anchorId;
-
+  const rect = targetEl.getBoundingClientRect();
   const box = document.createElement('div');
   box.className = className;
-  box.style.cssText = `
-    position-anchor: ${anchorId};
-    top: anchor(top);
-    left: anchor(left);
-    width: anchor-size(width);
-    height: anchor-size(height);
-    min-width: 18px;
-    min-height: 18px;
-  `;
+
+  const top = rect.top - expand;
+  const left = rect.left - expand;
+  const width = Math.max(rect.width + expand * 2, 18);
+  const height = Math.max(rect.height + expand * 2, 18);
+
+  box.style.top = `${top}px`;
+  box.style.left = `${left}px`;
+  box.style.width = `${width}px`;
+  box.style.height = `${height}px`;
 
   const badge = document.createElement('div');
   badge.className = `webmcp-annotation-badge webmcp-annotation-badge-${tone}`;
@@ -833,10 +951,50 @@ function makeAnnotationBox({ targetEl, className, index, tone = 'element' } = {}
   box.appendChild(badge);
 
   ensureAnnotationLayer().appendChild(box);
+  annotationLayer.style.pointerEvents = 'none';
 
-  const item = { box, badge, targetEl, _anchorId: anchorId };
+  const item = { box, badge, targetEl, expand };
   annotationNodes.push(item);
   return item;
+}
+
+function repositionAnnotationBoxes() {
+  if (!annotationVisible || !annotationNodes.length) return;
+
+  for (const item of annotationNodes) {
+    if (!(item?.targetEl instanceof Element) || !(item?.box instanceof HTMLElement)) continue;
+
+    const rect = item.targetEl.getBoundingClientRect();
+    const expand = Number.isFinite(item.expand) ? item.expand : 5;
+
+    if (rect.width <= 0 || rect.height <= 0) {
+      item.box.style.display = "none";
+      continue;
+    }
+
+    item.box.style.display = "";
+    item.box.style.top = `${rect.top - expand}px`;
+    item.box.style.left = `${rect.left - expand}px`;
+    item.box.style.width = `${Math.max(rect.width + expand * 2, 18)}px`;
+    item.box.style.height = `${Math.max(rect.height + expand * 2, 18)}px`;
+  }
+}
+function scheduleAnnotationReposition() {
+  if (!annotationVisible) return;
+  if (annotationSyncRaf) return;
+
+  annotationSyncRaf = requestAnimationFrame(() => {
+    annotationSyncRaf = 0;
+    repositionAnnotationBoxes();
+  });
+}
+
+function installAnnotationViewportSync() {
+  if (annotationViewportSyncInstalled) return;
+  annotationViewportSyncInstalled = true;
+
+  window.addEventListener("scroll", scheduleAnnotationReposition, true);
+  window.addEventListener("resize", scheduleAnnotationReposition, true);
 }
 
 function buildLegendItem(index, tone, title, el, attrLines) {
@@ -906,7 +1064,7 @@ function injectMarkupFromResult(result) {
 
   const context = resolveToolContext(result);
   const { containerEl, toolHost, normalizedToolName } = context;
-  const declarativeHost = toolHost instanceof HTMLFormElement ? toolHost : null;
+  const declarativeHost = toolHost instanceof Element ? toolHost : null;
   const metadataApplied = declarativeHost
     ? applyToolMetadata(declarativeHost, result, normalizedToolName)
     : false;
@@ -935,7 +1093,7 @@ function injectMarkupFromResult(result) {
     containerFound: Boolean(containerEl),
     message: metadataApplied
       ? `Declarative WebMCP markup injected: ${visibleCount} element(s).`
-      : 'Parameter markup injected, but no FORM host was found, so declarative tool attributes were skipped.'
+      : 'Parameter markup injected, but no eligible host element was found inside the original wrapper.'
   };
 }
 
@@ -943,19 +1101,20 @@ function buildLegendItemsFromResult(result) {
   const context = resolveToolContext(result);
   const { containerEl, toolHost, normalizedToolName } = context;
   const legendItems = [];
-  const declarativeHost = toolHost instanceof HTMLFormElement ? toolHost : null;
+  const declarativeHost = toolHost instanceof Element ? toolHost : null;
+  const hostForLegend = declarativeHost || containerEl || null;
 
-  if (containerEl) {
-    const rect = containerEl.getBoundingClientRect();
+  if (hostForLegend instanceof Element) {
+    const rect = hostForLegend.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
       makeAnnotationBox({
-        targetEl: containerEl,
+        targetEl: hostForLegend,
         className: 'webmcp-annotation-box webmcp-annotation-container',
         index: 'C',
-        tone: 'container'
+        tone: 'container',
+        expand: 15
       });
 
-      const hostForLegend = declarativeHost || containerEl;
       const containerLines = [
         `${WEBMCP_ATTRS.toolName}="${normalizedToolName}"`,
         `${WEBMCP_ATTRS.toolDescription}="${collapseWS(result.container?.tooldescription || '')}"`
@@ -985,6 +1144,7 @@ function buildLegendItemsFromResult(result) {
     const el = resolveInteractiveTarget(rawEl);
     if (!(el instanceof Element)) continue;
     if (!isActuallyInteractiveElement(el)) continue;
+
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
 
@@ -994,7 +1154,8 @@ function buildLegendItemsFromResult(result) {
       targetEl: el,
       className: 'webmcp-annotation-box webmcp-annotation-element',
       index: String(visibleCount),
-      tone: 'element'
+      tone: 'element',
+      expand: 0
     });
 
     legendItems.push(
@@ -1018,15 +1179,17 @@ function showAnnotationsFromResult(result) {
   destroyAnnotationUI();
 
   if (!result?.container?.xpath) {
-    showStatusLine('No AI result available for preview.');
+    showStatusLine("No AI result available for preview.");
     return false;
   }
 
   const { legendItems, visibleCount } = buildLegendItemsFromResult(result);
   renderAnnotationLegend(legendItems);
   annotationVisible = true;
+  repositionAnnotationBoxes();
   updateActionButtons();
-  return visibleCount >= 0;
+
+  return visibleCount > 0;
 }
 
 function hideAnnotations() {
@@ -1159,9 +1322,10 @@ function scheduleSessionReapply(reason = 'unknown', delay = 120) {
 
 function isInsideWebMcpUi(node) {
   if (!(node instanceof Element)) return false;
-
+  if (isInShadowUi(node)) return true;
   return Boolean(
     node.closest('[data-webmcp-widget]') ||
+    node.closest('[data-webmcp-launcher]') ||
     node.closest('[data-webmcp-annotation-layer]') ||
     node.closest('[data-webmcp-annotation-legend]')
   );
@@ -1373,7 +1537,7 @@ function updateActionButtons() {
     if (!markupInjected) {
       widgetPreviewBtn.textContent = 'Inject Markup';
     } else {
-      widgetPreviewBtn.textContent = annotationVisible ? 'Hide Annotations' : 'Show Annotations';
+      widgetPreviewBtn.textContent = annotationVisible ? 'Hide Elements' : 'Show Elements';
     }
   }
 
@@ -1433,19 +1597,21 @@ function createPickerOverlay() {
   pickerLabel.className = 'webmcp-picker-label';
 
   pickerOverlay.appendChild(pickerLabel);
-  document.body.appendChild(pickerOverlay);
+  ensureShadowRoot();
+  overlayMount.appendChild(pickerOverlay);
   return pickerOverlay;
 }
 
 function positionOverlay(el) {
   if (!pickerOverlay || !(el instanceof Element)) return;
+
   const rect = el.getBoundingClientRect();
-  pickerOverlay.style.cssText = `
-    width:${rect.width}px;
-    height:${rect.height}px;
-    top:${rect.top + window.scrollY}px;
-    left:${rect.left + window.scrollX}px;
-  `;
+
+  pickerOverlay.style.width = `${rect.width}px`;
+  pickerOverlay.style.height = `${rect.height}px`;
+  pickerOverlay.style.top = `${rect.top}px`;
+  pickerOverlay.style.left = `${rect.left}px`;
+
   if (pickerLabel) {
     pickerLabel.textContent = `${el.tagName.toLowerCase()} • ${Math.round(rect.width)}×${Math.round(rect.height)} • ${el.children.length} children`;
   }
@@ -1665,16 +1831,39 @@ function setWidgetPos(left, top) {
   widgetRoot.style.bottom = 'auto';
 }
 
+function pinWidgetTopRight() {
+  if (!widgetRoot || !widgetRoot.isConnected) return;
+
+  setWidgetPos(
+    window.innerWidth - widgetRoot.offsetWidth - WIDGET_RIGHT_OFFSET,
+    WIDGET_TOP_OFFSET
+  );
+}
+
+function pinLauncherTopRight() {
+  if (!widgetLauncher || !widgetLauncher.isConnected) return;
+
+  widgetLauncher.style.top = `${WIDGET_TOP_OFFSET}px`;
+  widgetLauncher.style.right = `${WIDGET_RIGHT_OFFSET}px`;
+  widgetLauncher.style.left = 'auto';
+  widgetLauncher.style.bottom = 'auto';
+}
+
 function handleWidgetResize() {
-  if (!widgetRoot || !document.contains(widgetRoot)) return;
   requestAnimationFrame(() => {
-    const width = widgetRoot.offsetWidth || 340;
-    setWidgetPos(window.innerWidth - width - WIDGET_RIGHT_OFFSET, WIDGET_TOP_OFFSET);
+    if (widgetRoot && widgetRoot.isConnected && !widgetCollapsed) {
+      pinWidgetTopRight();
+    }
+
+    if (widgetLauncher && widgetLauncher.isConnected && widgetCollapsed) {
+      pinLauncherTopRight();
+    }
   });
 }
+
 function ensureWidget() {
   if (!IS_TOP_WINDOW) return null;
-  if (widgetRoot && document.contains(widgetRoot)) return widgetRoot;
+  if (widgetRoot && widgetRoot.isConnected) return widgetRoot;
 
   widgetRoot = document.createElement('section');
   widgetRoot.id = 'webmcp-floating-widget';
@@ -1819,115 +2008,156 @@ function ensureWidget() {
   );
   widgetRoot.appendChild(widgetBody);
 
-  const collapsedBadge = document.createElement('button');
-  collapsedBadge.type = 'button';
-  collapsedBadge.className = 'webmcp-collapsed-badge';
+  widgetLauncher = document.createElement('button');
+  widgetLauncher.type = 'button';
+  widgetLauncher.id = 'webmcp-widget-launcher';
+  widgetLauncher.className = 'webmcp-collapsed-badge';
+  widgetLauncher.setAttribute('data-webmcp-launcher', 'true');
+  widgetLauncher.setAttribute('aria-label', 'Open WebMCP Annotator');
+  widgetLauncher.setAttribute('title', 'Open WebMCP Annotator');
 
   const badgeIcon = document.createElement('div');
-  badgeIcon.role = 'image';
-  badgeIcon.alt = 'WebMCP Annotator icon';
+  badgeIcon.role = 'img';
+  badgeIcon.ariaLabel = 'WebMCP Annotator icon';
   badgeIcon.className = 'webmcp-badge-icon';
-  badgeIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20">
-  <defs>
-    <linearGradient id="webMCPGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00F2FE" />
-      <stop offset="100%" stop-color="#4FACFE" />
-    </linearGradient>
-  </defs>
-  <path d="M 38 22 L 20 22 L 20 106 L 38 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M 90 22 L 108 22 L 108 106 L 90 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M 64 28 Q 64 64 28 64 Q 64 64 64 100 Q 64 64 100 64 Q 64 64 64 28 Z" fill="#00F2FE" />
-  <circle cx="64" cy="64" r="6" fill="#FFFFFF" />
-</svg>
+  badgeIcon.innerHTML = `
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20">
+    <defs>
+      <linearGradient id="webMCPGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#00F2FE" />
+        <stop offset="100%" stop-color="#4FACFE" />
+      </linearGradient>
+    </defs>
+    <path d="M 38 22 L 20 22 L 20 106 L 38 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 90 22 L 108 22 L 108 106 L 90 106" fill="none" stroke="url(#webMCPGlow)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 64 28 Q 64 64 28 64 Q 64 64 64 100 Q 64 64 100 64 Q 64 64 64 28 Z" fill="#00F2FE"/>
+    <circle cx="64" cy="64" r="6" fill="#FFFFFF"/>
+  </svg>
 `;
 
-  const badgeLabel = document.createElement('span');
-  badgeLabel.className = 'webmcp-badge-label';
-  badgeLabel.textContent = 'Open WebMCP Annotator';
+  widgetLauncherLabel = document.createElement('span');
+  widgetLauncherLabel.className = 'webmcp-badge-label';
+  widgetLauncherLabel.textContent = 'Open WebMCP Annotator';
 
-  collapsedBadge.append(badgeIcon, badgeLabel);
-  widgetRoot.appendChild(collapsedBadge);
+  widgetLauncher.append(badgeIcon, widgetLauncherLabel);
 
-  const mountTarget = document.body || document.documentElement;
-  mountTarget.appendChild(widgetRoot);
+  ensureShadowRoot();
+  widgetMount.appendChild(widgetRoot);
+  widgetMount.appendChild(widgetLauncher);
+
+  widgetRoot.style.pointerEvents = 'auto';
+  widgetLauncher.style.pointerEvents = 'auto';
 
   // ── Collapse / expand logic ──────────────────────────────────────────────────
 
-  function pinWidgetTopRight() {
-    setWidgetPos(
-      window.innerWidth - widgetRoot.offsetWidth - WIDGET_RIGHT_OFFSET,
-      WIDGET_TOP_OFFSET
-    );
-  }
-
   function applyCollapseState() {
+    if (!widgetRoot || !widgetLauncher) return;
+
     if (widgetCollapsed) {
-      widgetBody.classList.add('webmcp-hidden');
-      collapsedBadge.classList.remove('webmcp-hidden');
-      widgetRoot.classList.add('webmcp-is-collapsed');
+      widgetRoot.classList.add('webmcp-hidden');
+      widgetLauncher.classList.remove('webmcp-hidden');
+      widgetLauncher.setAttribute('aria-expanded', 'false');
+      widgetCollapseBtn?.setAttribute('aria-expanded', 'false');
     } else {
-      widgetBody.classList.remove('webmcp-hidden');
-      collapsedBadge.classList.add('webmcp-hidden');
-      widgetRoot.classList.remove('webmcp-is-collapsed');
+      widgetRoot.classList.remove('webmcp-hidden');
+      widgetLauncher.classList.add('webmcp-hidden');
+      widgetLauncher.setAttribute('aria-expanded', 'true');
+      widgetCollapseBtn?.setAttribute('aria-expanded', 'true');
     }
   }
 
   widgetCollapseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
     widgetCollapsed = true;
     applyCollapseState();
-
-    requestAnimationFrame(() => {
-      pinWidgetTopRight();
-    });
+    pinLauncherTopRight();
   });
 
-  collapsedBadge.addEventListener('click', () => {
+  widgetLauncher.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     widgetCollapsed = false;
     applyCollapseState();
-
-    requestAnimationFrame(() => {
-      pinWidgetTopRight();
-    });
+    pinWidgetTopRight();
   });
 
   applyCollapseState();
 
+  requestAnimationFrame(() => {
+    pinWidgetTopRight();
+    pinLauncherTopRight();
+  });
+
+
+  let widgetDragRaf = 0;
+
+  function flushWidgetDrag() {
+    widgetDragRaf = 0;
+    if (!dragState || !widgetRoot) return;
+
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - dragState.width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - dragState.height - margin);
+
+    const clampedLeft = Math.min(Math.max(dragState.nextLeft, margin), maxLeft);
+    const clampedTop = Math.min(Math.max(dragState.nextTop, margin), maxTop);
+
+    widgetRoot.style.left = `${clampedLeft}px`;
+    widgetRoot.style.top = `${clampedTop}px`;
+    widgetRoot.style.right = "auto";
+    widgetRoot.style.bottom = "auto";
+  }
+
   const beginDrag = (e) => {
     if (!widgetRoot || e.button !== 0) return;
-    if (e.target.closest('button, input, select, textarea, label')) return;
+    if (e.target.closest("button, input, select, textarea, label")) return;
 
     const rect = widgetRoot.getBoundingClientRect();
-    setWidgetPos(rect.left, rect.top);
 
     dragState = {
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       left: rect.left,
-      top: rect.top
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      nextLeft: rect.left,
+      nextTop: rect.top
     };
 
-    header.classList.add('is-dragging');
+    header.classList.add("is-dragging");
     header.setPointerCapture(e.pointerId);
     e.preventDefault();
   };
 
   const onDragMove = (e) => {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
-    setWidgetPos(
-      dragState.left + e.clientX - dragState.startX,
-      dragState.top + e.clientY - dragState.startY
-    );
+
+    dragState.nextLeft = dragState.left + (e.clientX - dragState.startX);
+    dragState.nextTop = dragState.top + (e.clientY - dragState.startY);
+
+    if (!widgetDragRaf) {
+      widgetDragRaf = requestAnimationFrame(flushWidgetDrag);
+    }
   };
 
   const endDrag = (e) => {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
+
     try {
       header.releasePointerCapture(e.pointerId);
-    } catch (_) { }
+    } catch { }
+
+    if (widgetDragRaf) {
+      cancelAnimationFrame(widgetDragRaf);
+      widgetDragRaf = 0;
+    }
+
+    flushWidgetDrag();
     dragState = null;
-    header.classList.remove('is-dragging');
+    header.classList.remove("is-dragging");
   };
 
   header.addEventListener('pointerdown', beginDrag);
@@ -1940,17 +2170,12 @@ function ensureWidget() {
     widgetResizeHandlerInstalled = true;
   }
 
-  widgetRoot.classList.remove('webmcp-hidden');
-  requestAnimationFrame(() => {
-    pinWidgetTopRight();
-  });
   updateSelectionText();
-
   if (lastAiResult) {
     setResultText(JSON.stringify(lastAiResult, null, 2));
   }
-
   updateActionButtons();
+
   return widgetRoot;
 }
 
@@ -1961,8 +2186,9 @@ function initEmbeddedWidget() {
     try {
       ensureWidget();
       installNavigationWatchers();
+      installAnnotationViewportSync();
     } catch (err) {
-      console.error('WebMCP widget init failed:', err);
+      console.error("WebMCP widget init failed", err);
     }
   };
 

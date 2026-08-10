@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
-:root {
+:host {
   --webmcp-annotation-anchor-layer: 2147483620;
   /* рамки аннотаций */
   --webmcp-picker-layer: 2147483630;
@@ -12,6 +12,50 @@
   --webmcp-widget-layer: 2147483647;
   /* floating widget */
 }
+
+:host {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  contain: layout style paint;
+  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
+  color-scheme: dark;
+}
+
+:host,
+:host *,
+:host *::before,
+:host *::after {
+  box-sizing: border-box;
+}
+
+#webmcp-shadow-root,
+#webmcp-overlay-mount,
+#webmcp-legend-mount,
+#webmcp-widget-mount {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#webmcp-floating-widget,
+#webmcp-widget-launcher,
+#webmcp-annotation-legend,
+.webmcp-btn,
+.webmcp-btn-collapse,
+.webmcp-btn-copy-mini,
+.webmcp-collapsed-badge {
+  pointer-events: auto;
+}
+
+#webmcp-annotation-layer,
+.webmcp-annotation-box,
+.webmcp-picker-overlay,
+.webmcp-picker-label {
+  pointer-events: none;
+}
+
 
 #webmcp-floating-widget {
   --webmcp-bg-gradient: linear-gradient(135deg, #090d16 0%, #111827 50%, #0d0f1a 100%);
@@ -84,6 +128,7 @@ body.webmcp-picking-cursor {
   margin-bottom: 8px;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .webmcp-widget-header.is-dragging {
@@ -375,7 +420,7 @@ body.webmcp-picking-cursor {
   width: min(420px, calc(100vw - 32px));
   max-height: min(85vh, 900px);
   min-height: 120px;
-  overflow: hidden;
+  overflow: auto;
   resize: vertical;
   z-index: var(--webmcp-annotation-panel-layer);
   border: 1px solid var(--webmcp-card-border);
@@ -403,6 +448,7 @@ body.webmcp-picking-cursor {
   margin-bottom: 10px;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .webmcp-annotation-legend-header.is-dragging {
@@ -500,18 +546,53 @@ body.webmcp-picking-cursor {
 }
 
 @media (max-width: 520px) {
-#webmcp-floating-widget {
-  top: 8px;
-  right: 8px;
-  left: auto;
-  bottom: auto;
-  width: min(340px, calc(100vw - 16px));
-  max-width: calc(100vw - 16px);
-  max-height: calc(100vh - 16px);
-}
+  :host {
+    all: initial;
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    contain: layout style paint;
+    font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
+    color-scheme: dark;
+  }
+
+  :host,
+  :host *,
+  :host *::before,
+  :host *::after {
+    box-sizing: border-box;
+  }
+
+
+  #webmcp-floating-widget {
+    top: 8px;
+    right: 8px;
+    left: auto;
+    bottom: auto;
+    width: min(340px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
 }
 
 @media (prefers-contrast: more) {
+  :host {
+    all: initial;
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    contain: layout style paint;
+    font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
+    color-scheme: dark;
+  }
+
+  :host,
+  :host *,
+  :host *::before,
+  :host *::after {
+    box-sizing: border-box;
+  }
+
   #webmcp-floating-widget {
     --webmcp-card-border: rgba(241, 245, 249, 0.62);
     --webmcp-input-focus-border: #bfdbfe;
@@ -529,18 +610,14 @@ body.webmcp-picking-cursor {
   min-width: 0;
 }
 
-#webmcp-floating-widget.webmcp-is-collapsed {
-  width: auto;
-  max-width: calc(100vw - 32px);
-  max-height: none;
-  overflow: visible;
-  padding: 0;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-}
-
+button.webmcp-collapsed-badge,
 .webmcp-collapsed-badge {
+  position: fixed;
+  top: 16px;
+  right: 36px;
+  left: auto;
+  bottom: auto;
+  z-index: calc(var(--webmcp-widget-layer) + 1);
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -548,9 +625,12 @@ body.webmcp-picking-cursor {
   padding: 10px 14px;
   border: 1px solid var(--webmcp-card-border);
   border-radius: 999px;
-  background: var(--webmcp-bg-gradient);
+  background-color: #0f172a;
+  background-image: var(--webmcp-bg-gradient);
+  background-repeat: no-repeat;
+  background-size: cover;
   color: var(--webmcp-text-primary);
-  font-family: 'Plus Jakarta Sans', 'Segoe UI', Arial, sans-serif;
+  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
   font-size: 0.92rem;
   font-weight: 700;
   line-height: 1;
@@ -559,6 +639,8 @@ body.webmcp-picking-cursor {
   box-shadow: 0 14px 30px rgba(2, 6, 23, 0.45);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
   white-space: nowrap;
+  pointer-events: auto;
+  opacity: 1;
 }
 
 .webmcp-collapsed-badge:hover {
@@ -604,20 +686,4 @@ body.webmcp-picking-cursor {
   line-height: 1;
   cursor: pointer;
   transition: all 0.2s ease;
-}
-
-
-#webmcp-floating-widget.webmcp-is-collapsed .webmcp-widget-header {
-  margin-bottom: 0;
-}
-
-@media (max-width: 520px) {
-  #webmcp-floating-widget.webmcp-is-collapsed {
-    top: 8px;
-    left: auto;
-    right: 8px;
-    bottom: auto;
-    width: auto;
-    max-width: calc(100vw - 16px);
-  }
 }
