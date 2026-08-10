@@ -58,16 +58,28 @@ async function handleAiAnalysis(request) {
               '1. STRICT LANGUAGE: All generated textual values (titles, descriptions, toolnames) MUST strictly match the primary language of the provided screenshot/UI. No translations.',
               '2. RAW JSON ONLY: Return pure JSON. Do not wrap the output in ```json markdown blocks. No comments, no extra characters.',
               '',
-              'ANALYSIS LOGIC:',
-            '- Component Agnostic: Analyze the UI to determine the primary intent of the container (e.g., search, config, filter, add-to-cart form).',
-            '- Naming Priority: Derive container.toolname from the main execution button (e.g., "submit", "search", "add_to_cart").',
-            '- Submit/Execution Button Rule (CRITICAL): The primary submit/execution button is NOT a tool parameter and MUST NOT be included in elements. Use it only to derive container.toolname and to determine container.toolautosubmit.',
-            '- Strict Scope: Only include elements that act as DIRECT INPUTS for the primary intent.',
-            '- Functional Exclusion (CRITICAL): If an interactive element initiates a NEW action (e.g., opening a new page, navigating to a detail view, selecting a category/genre that leads away from the tool), it is NOT a parameter. EXCLUDE IT.',
-            '- Element Selection: Map only controls that modify the container\'s state locally (e.g., inputs, checkboxes, color switches).',
-            '- Visual Inference: Infer labels for icons/buttons only if they serve the primary intent.',
-            '- Group Unpacking: Unpack local state options (e.g., color variants), but never unpack navigation/content lists.',
-            '- Exclusions: Exclude all navigation links, content recommendations, genre/title lists, and static informational text.'
+              'ANALYSIS & CATEGORIZATION LOGIC:',
+              '',
+              '1. VISUAL INSPECTION & OPTION GROUP EXTRACTION (CRITICAL):',
+              '   - Look at the UI screenshot first to identify ALL functional parameters (e.g. Size pickers S/M/L/XL/XXL, Color swatches, Quantity selectors -/+/1, Search inputs, Filter options).',
+              '   - Form option groups (such as Size pickers S/M/L/XL/XXL, Color selectors, Variant pickers, Quantity adjusters) represent PRIMARY TOOL PARAMETERS and MUST NEVER BE OMITTED.',
+              '',
+              '2. CATEGORIZATION RULES FOR THE TWO ARRAYS:',
+              '   a) "elements" (Direct Declarative Candidates):',
+              '      - Any candidate in the DOM candidate list that is a native or semantic HTML tag: <input> (including radio, checkbox, text, number, hidden), <select>, <button>, <label>, or <a> link MUST be categorized under "elements".',
+              '      - Native HTML tags (input, button, select, label, a) CAN receive declarative WebMCP attributes (toolparamtitle, toolparamdescription) directly in HTML, so they belong in "elements". DO NOT put native HTML tags into possibleCandidates if they are present in the DOM candidate list.',
+              '      - Option groups (e.g. Size pickers S/M/L/XL/XXL, radio buttons, dropdowns, variant buttons) whose nodes appear as input/label/button/a tags in the DOM candidate list MUST be included in "elements" with their parameter title (e.g., toolparamtitle: "Size" or "Tamaño").',
+              '',
+              '   b) "possibleCandidates" (Non-Declarative / Custom Candidates):',
+              '      - Use "possibleCandidates" ONLY for custom, non-semantic UI nodes (e.g. custom <div>, <span>, SVG, pseudo-CSS controls) that act as inputs/controls visually or functionally but LACK standard HTML element tags (<input>, <button>, <select>, <label>, <a>) in the DOM candidate list to receive HTML attributes directly.',
+              '      - For every item in possibleCandidates, provide a short 1-sentence "reason" explaining why it is a custom/non-declarative component.',
+              '',
+              '3. SUBMIT / EXECUTION BUTTON RULE:',
+              '   - The primary execution button (e.g. "ADD TO CART", "Submit", "Search") is NOT a parameter and MUST NOT be in elements or possibleCandidates. Use it only to derive container.toolname.',
+              '',
+              '4. PARAMETER DETAILS:',
+              '   - Provide toolparamtitle and toolparamdescription for every item in both arrays.',
+              '   - Unpack option choices (e.g. size pickers S/M/L/XL/XXL, color swatches), mapping the corresponding option nodes into elements.'
             ].join('\n')
           }]
         },
@@ -94,7 +106,7 @@ async function handleAiAnalysis(request) {
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: getAiSchema(),
-          temperature: 0.1 // Снизила температуру до 0.1 для большей стабильности и предсказуемости JSON
+          temperature: 0.1
         }
       })
     }
@@ -107,8 +119,8 @@ async function handleAiAnalysis(request) {
   if (!resText) throw new Error('AI response was empty.');
 
   const parsed = JSON.parse(resText);
-  if (!parsed?.container || !Array.isArray(parsed.elements)) {
-    throw new Error('AI response is missing required fields.');
+  if (!parsed?.container || !Array.isArray(parsed.elements) || !Array.isArray(parsed.possibleCandidates)) {
+    throw new Error('AI response is missing required fields (container, elements, possibleCandidates).');
   }
   return parsed;
 }
@@ -145,7 +157,7 @@ function getAiSchema() {
       },
       elements: {
         type: 'ARRAY',
-        description: 'List of actionable interactive parameters found strictly inside the container. Do not include submit/execution elements',
+        description: 'List of direct declarative interactive parameters found inside the container with proper HTML semantics to accept WebMCP DOM attributes. Do not include submit/execution elements.',
         items: {
           type: 'OBJECT',
           properties: {
@@ -164,9 +176,35 @@ function getAiSchema() {
           },
           required: ['xpath', 'toolparamtitle', 'toolparamdescription']
         }
+      },
+      possibleCandidates: {
+        type: 'ARRAY',
+        description: 'List of components or pseudo-controls that look/act like inputs/parameters but CANNOT accept declarative WebMCP attributes due to lacking proper HTML semantics. Suggest WebMCP parameter title, description, and a short reason for each.',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            xpath: {
+              type: 'STRING',
+              description: 'The precise XPath of the node.'
+            },
+            toolparamtitle: {
+              type: 'STRING',
+              description: 'Suggested parameter title.'
+            },
+            toolparamdescription: {
+              type: 'STRING',
+              description: 'Suggested parameter description.'
+            },
+            reason: {
+              type: 'STRING',
+              description: 'A very short explanation (1 concise sentence in English) explaining why this item is a possible candidate rather than a direct declarative element.'
+            }
+          },
+          required: ['xpath', 'toolparamtitle', 'toolparamdescription', 'reason']
+        }
       }
     },
-    required: ['container', 'elements']
+    required: ['container', 'elements', 'possibleCandidates']
   };
 }
 

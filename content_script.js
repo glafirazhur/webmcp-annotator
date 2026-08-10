@@ -67,7 +67,20 @@ function truncate(text, max) {
 function isHidden(el) {
   if (el.hidden) return true;
   const s = window.getComputedStyle(el);
-  return s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
+  const hiddenStyle = s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
+  if (hiddenStyle) {
+    if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden') && el.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl instanceof Element) {
+        const ls = window.getComputedStyle(lbl);
+        if (ls.display !== 'none' && ls.visibility !== 'hidden' && ls.opacity !== '0') {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 function isClickableLink(el) {
@@ -84,6 +97,7 @@ function isCustomControl(el) {
     Number(tabindex) >= 0 &&
     (el.hasAttribute('onclick') || el.hasAttribute('aria-pressed') || el.hasAttribute('aria-expanded'))
   ) return true;
+  if (el.tagName === 'LABEL' && (el.hasAttribute('for') || el.closest('fieldset, [class*="option"], [class*="variant"], [class*="swatch"], [class*="selector"]'))) return true;
   return false;
 }
 
@@ -188,7 +202,7 @@ function getSiblingOptionCount(el) {
   const group = getOptionGroupContainer(el);
   if (!group) return 0;
 
-  const options = group.querySelectorAll('a[href], button, [role="option"], [role="radio"], [role="tab"]');
+  const options = group.querySelectorAll('a[href], button, input, label, [role="option"], [role="radio"], [role="tab"]');
   return options.length;
 }
 
@@ -258,8 +272,11 @@ function getOptionLikeMeta(el) {
   const parentLi = target.closest('li');
   const group = getOptionGroupContainer(target);
 
+  const labels = getLabels(target);
   const ownText = collapseWS(
+    labels[0] ||
     getExplicitLabel(target) ||
+    (target instanceof HTMLInputElement ? target.value : '') ||
     target.innerText ||
     target.textContent ||
     ''
@@ -290,9 +307,18 @@ function getOptionLikeMeta(el) {
   };
 }
 
+function isCandidateControl(el) {
+  if (!(el instanceof Element)) return false;
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA') return true;
+  if (tag === 'A') return Boolean(el.getAttribute('href')) || el.hasAttribute('role') || isOptionLikeLink(el);
+  if (tag === 'LABEL') return true;
+  return isCustomControl(el);
+}
+
 function buildCandidate(el, kind) {
   const sourceEl = el;
-  const targetEl = kind === 'control' ? resolveInteractiveTarget(el) : el;
+  const targetEl = kind === 'control' ? (resolveInteractiveTarget(el) || el) : el;
   if (!(targetEl instanceof Element)) return null;
 
   const node = {
@@ -302,6 +328,7 @@ function buildCandidate(el, kind) {
   };
 
   if (targetEl.getAttribute('type')) node.type = targetEl.getAttribute('type');
+  if (isHidden(targetEl)) node.hiddenInDom = true;
 
   const labels = kind === 'control' ? getLabels(targetEl) : [];
   const rawText = kind === 'control'
@@ -376,16 +403,21 @@ function buildDomSummary(wrapperEl) {
 
   function walk(el) {
     if (!(el instanceof Element) || SKIP_TAGS.has(el.tagName)) return;
-    if (isHidden(el)) return;
 
-    if (CONTROL_TAGS.has(el.tagName) || isClickableLink(el) || isCustomControl(el)) {
-      pushUnique(controls, buildCandidate(el, 'control'));
+    if (isCandidateControl(el)) {
+      const cand = buildCandidate(el, 'control');
+      if (cand) pushUnique(controls, cand);
+      if (el.children.length > 0 && el.tagName !== 'SELECT') {
+        for (const child of el.children) walk(child);
+      }
       return;
     }
 
+    if (isHidden(el)) return;
+
     if (TEXT_TAGS.has(el.tagName) && shouldKeepTextBlock(el)) {
       const text = truncate(el.innerText || el.textContent, 200);
-      if (text && text.length > 2) {
+      if (text && collapseWS(text).length > 0) {
         pushUnique(textBlocks, buildCandidate(el, 'text'));
         return;
       }
@@ -421,22 +453,36 @@ function normalizeAiElementTarget(item) {
 }
 
 function normalizeAiResultTargets(result) {
-  if (!result?.container?.xpath || !Array.isArray(result.elements)) return result;
+  if (!result?.container?.xpath) return result;
 
   const normalizedElements = [];
+  const normalizedPossible = [];
   const seen = new Set();
 
-  for (const item of result.elements) {
-    const normalized = normalizeAiElementTarget(item);
-    if (!normalized?.xpath) continue;
-    if (seen.has(normalized.xpath)) continue;
-    seen.add(normalized.xpath);
-    normalizedElements.push(normalized);
+  if (Array.isArray(result.elements)) {
+    for (const item of result.elements) {
+      const normalized = normalizeAiElementTarget(item);
+      if (!normalized?.xpath) continue;
+      if (seen.has(normalized.xpath)) continue;
+      seen.add(normalized.xpath);
+      normalizedElements.push(normalized);
+    }
+  }
+
+  if (Array.isArray(result.possibleCandidates)) {
+    for (const item of result.possibleCandidates) {
+      const normalized = normalizeAiElementTarget(item);
+      if (!normalized?.xpath) continue;
+      if (seen.has(normalized.xpath)) continue;
+      seen.add(normalized.xpath);
+      normalizedPossible.push(normalized);
+    }
   }
 
   return {
     ...result,
-    elements: normalizedElements
+    elements: normalizedElements,
+    possibleCandidates: normalizedPossible
   };
 }
 
@@ -1141,9 +1187,8 @@ function buildLegendItemsFromResult(result) {
   let visibleCount = 0;
   for (const item of result.elements || []) {
     const rawEl = getElementByXPath(item.xpath);
-    const el = resolveInteractiveTarget(rawEl);
+    const el = resolveInteractiveTarget(rawEl) || rawEl;
     if (!(el instanceof Element)) continue;
-    if (!isActuallyInteractiveElement(el)) continue;
 
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
@@ -1172,7 +1217,42 @@ function buildLegendItemsFromResult(result) {
     );
   }
 
-  return { legendItems, visibleCount };
+  let possibleCount = 0;
+  for (const item of result.possibleCandidates || []) {
+    const rawEl = getElementByXPath(item.xpath);
+    const el = resolveInteractiveTarget(rawEl) || rawEl;
+    if (!(el instanceof Element)) continue;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    possibleCount += 1;
+    const badgeLabel = `P${possibleCount}`;
+
+    makeAnnotationBox({
+      targetEl: el,
+      className: 'webmcp-annotation-box webmcp-annotation-possible',
+      index: badgeLabel,
+      tone: 'possible',
+      expand: 0
+    });
+
+    legendItems.push(
+      buildLegendItem(
+        badgeLabel,
+        'possible',
+        `${item.toolparamtitle || `Candidate ${possibleCount}`} (Suggested)`,
+        el,
+        [
+          collapseWS(item.reason || 'Possible candidate — Non-declarative control'),
+          `${WEBMCP_ATTRS.paramTitle}="${collapseWS(item.toolparamtitle || '')}"`,
+          `${WEBMCP_ATTRS.paramDescription}="${collapseWS(item.toolparamdescription || '')}"`
+        ]
+      )
+    );
+  }
+
+  return { legendItems, visibleCount: visibleCount + possibleCount };
 }
 
 function showAnnotationsFromResult(result) {
@@ -1366,6 +1446,12 @@ function sessionTargetsMissing(result) {
   if (!containerEl) return true;
 
   for (const item of result.elements || []) {
+    if (!item?.xpath) continue;
+    const el = getElementByXPath(item.xpath);
+    if (!el) return true;
+  }
+
+  for (const item of result.possibleCandidates || []) {
     if (!item?.xpath) continue;
     const el = getElementByXPath(item.xpath);
     if (!el) return true;
