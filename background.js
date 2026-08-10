@@ -52,34 +52,43 @@ async function handleAiAnalysis(request) {
         systemInstruction: {
           parts: [{
             text: [
-              'You are an expert DOM and UI analyzer. Your task is to extract interactive elements from a given UI container into a WebMCP Tool specification.',
+              'You are an expert DOM and UI analyzer. Your task is to extract elements from a given UI container into a WebMCP Tool specification.',
               '',
               'CRITICAL RULES:',
-              '1. STRICT LANGUAGE: All generated textual values (titles, descriptions, toolnames) MUST strictly match the primary language of the provided screenshot/UI. No translations.',
+              '1. STRICT LANGUAGE: Parameter titles, descriptions, and toolnames (toolparamtitle, toolparamdescription, toolname) MUST strictly match the primary language of the provided screenshot/UI. Explanations in the reason field (for possibleCandidates) MUST always be in concise English.',
               '2. RAW JSON ONLY: Return pure JSON. Do not wrap the output in ```json markdown blocks. No comments, no extra characters.',
               '',
               'ANALYSIS & CATEGORIZATION LOGIC:',
               '',
               '1. VISUAL INSPECTION & OPTION GROUP EXTRACTION (CRITICAL):',
               '   - Look at the UI screenshot first to identify ALL functional parameters (e.g. Size pickers S/M/L/XL/XXL, Color swatches, Quantity selectors -/+/1, Search inputs, Filter options).',
-              '   - Form option groups (such as Size pickers S/M/L/XL/XXL, Color selectors, Variant pickers, Quantity adjusters) represent PRIMARY TOOL PARAMETERS and MUST NEVER BE OMITTED.',
+              '   - Every individual option choice within a group (e.g. S, M, L, XL, XXL) represents a primary parameter and MUST be individually unpacked into the output arrays. NEVER omit or merge option choices into a single group item.',
               '',
               '2. CATEGORIZATION RULES FOR THE TWO ARRAYS:',
-              '   a) "elements" (Direct Declarative Candidates):',
-              '      - Any candidate in the DOM candidate list that is a native or semantic HTML tag: <input> (including radio, checkbox, text, number, hidden), <select>, <button>, <label>, or <a> link MUST be categorized under "elements".',
-              '      - Native HTML tags (input, button, select, label, a) CAN receive declarative WebMCP attributes (toolparamtitle, toolparamdescription) directly in HTML, so they belong in "elements". DO NOT put native HTML tags into possibleCandidates if they are present in the DOM candidate list.',
-              '      - Option groups (e.g. Size pickers S/M/L/XL/XXL, radio buttons, dropdowns, variant buttons) whose nodes appear as input/label/button/a tags in the DOM candidate list MUST be included in "elements" with their parameter title (e.g., toolparamtitle: "Size" or "Tamaño").',
+              '   a) "elements" (Direct Declarative Interactive Form Elements ONLY):',
+              '      - ONLY native, visible interactive form controls (<input>, <select>, <textarea>, <button>) belong in "elements".',
+              '      - A candidate MUST be a standard form control AND be visibly present in the DOM (hiddenInDom is false, omitted, or undefined).',
+              '      - DO NOT put <label> tags, links (<a>), option group wrappers, or CSS-hidden form controls into "elements".',
               '',
-              '   b) "possibleCandidates" (Non-Declarative / Custom Candidates):',
-              '      - Use "possibleCandidates" ONLY for custom, non-semantic UI nodes (e.g. custom <div>, <span>, SVG, pseudo-CSS controls) that act as inputs/controls visually or functionally but LACK standard HTML element tags (<input>, <button>, <select>, <label>, <a>) in the DOM candidate list to receive HTML attributes directly.',
-              '      - For every item in possibleCandidates, provide a short 1-sentence "reason" explaining why it is a custom/non-declarative component.',
+              '   b) "possibleCandidates" (Custom Pseudo-Controls & Non-Declarative Option Pickers ONLY):',
+              '      - Include ONLY elements that visually or functionally act as interactive parameters or option controls, but LACK visible native form markup:',
+              '        1. Custom interactive pseudo-controls (e.g. custom toggle controls, custom sliders, pseudo-dropdowns, non-form clickable control nodes).',
+              '        2. Custom option pickers where native inputs are hidden in the DOM (hiddenInDom: true) and user interaction relies on visual option elements.',
+              '      - EXCLUSIONS — DO NOT INCLUDE IN possibleCandidates:',
+              '        - Static field labels or text descriptors that simply label an existing form control.',
+              '        - Standard text or navigation links that navigate pages or perform standard hyperlink actions.',
+              '        - Internal technical state or metadata inputs.',
+              '      - For every item in possibleCandidates, provide a short 1-sentence "reason" in English explaining why it is a custom or non-declarative parameter.',
               '',
               '3. SUBMIT / EXECUTION BUTTON RULE:',
               '   - The primary execution button (e.g. "ADD TO CART", "Submit", "Search") is NOT a parameter and MUST NOT be in elements or possibleCandidates. Use it only to derive container.toolname.',
+              '   - Secondary functional buttons (e.g. quantity "+" / "-" buttons, stepper controls, filter toggles) ARE parameters and MUST be included in elements if visible.',
               '',
-              '4. PARAMETER DETAILS:',
-              '   - Provide toolparamtitle and toolparamdescription for every item in both arrays.',
-              '   - Unpack option choices (e.g. size pickers S/M/L/XL/XXL, color swatches), mapping the corresponding option nodes into elements.'
+              '4. PARAMETER DETAILS & TITLE/DESCRIPTION RULES:',
+              '   - Provide toolparamtitle and toolparamdescription for EVERY item in BOTH arrays (elements and possibleCandidates).',
+              '   - FUNCTIONAL SPECIFICATION ONLY: Write toolparamtitle and toolparamdescription strictly as if the candidate were a properly coded native control (e.g. toolparamtitle: "XL", toolparamdescription: "Select size XL for the product").',
+              '   - NEVER mention HTML implementation terms (such as "label", "visual label", "div element", "span", "wrapper") inside toolparamtitle or toolparamdescription. Implementation details belong strictly in the reason field.',
+              '   - Unpack option choices into individual parameter items (e.g. size pickers S/M/L/XL/XXL, color swatches), categorizing visible native form inputs under elements and custom/label/hidden option nodes under possibleCandidates.'
             ].join('\n')
           }]
         },
@@ -157,21 +166,21 @@ function getAiSchema() {
       },
       elements: {
         type: 'ARRAY',
-        description: 'List of direct declarative interactive parameters found inside the container with proper HTML semantics to accept WebMCP DOM attributes. Do not include submit/execution elements.',
+        description: 'List of direct declarative visible native interactive form controls (<input>, <select>, <textarea>, <button>). Do not include labels, links, hidden inputs, or primary submit buttons.',
         items: {
           type: 'OBJECT',
           properties: {
             xpath: {
               type: 'STRING',
-              description: 'The precise XPath of the actionable node. If wrapped, target the deepest real clickable element.'
+              description: 'The precise XPath of the actionable node.'
             },
             toolparamtitle: {
               type: 'STRING',
-              description: 'The visible label text. If text is missing in the DOM, infer the semantic name visually from the screenshot (e.g., "search", "close").'
+              description: 'The visible label text in primary UI language.'
             },
             toolparamdescription: {
               type: 'STRING',
-              description: 'Explanation of what data or state this specific parameter controls.'
+              description: 'Explanation of what data or state this specific parameter controls in primary UI language.'
             }
           },
           required: ['xpath', 'toolparamtitle', 'toolparamdescription']
@@ -179,7 +188,7 @@ function getAiSchema() {
       },
       possibleCandidates: {
         type: 'ARRAY',
-        description: 'List of components or pseudo-controls that look/act like inputs/parameters but CANNOT accept declarative WebMCP attributes due to lacking proper HTML semantics. Suggest WebMCP parameter title, description, and a short reason for each.',
+        description: 'List of custom pseudo-controls or non-declarative option pickers (e.g., custom div/span toggles, custom sliders, pseudo-dropdowns, or CSS-hidden option pickers). DO NOT include standard field labels, text/navigation links, or technical hidden inputs. Provide parameter title, description, and reason in English.',
         items: {
           type: 'OBJECT',
           properties: {
@@ -189,11 +198,11 @@ function getAiSchema() {
             },
             toolparamtitle: {
               type: 'STRING',
-              description: 'Suggested parameter title.'
+              description: 'Functional parameter title as if for a properly coded native control in primary UI language (e.g. "XL", "Pink"). Do not include implementation terms like "label" or "div".'
             },
             toolparamdescription: {
               type: 'STRING',
-              description: 'Suggested parameter description.'
+              description: 'Functional parameter description explaining what option/action this parameter controls in primary UI language (e.g. "Select size XL for the product"). Do not include implementation terms like "visual label element".'
             },
             reason: {
               type: 'STRING',

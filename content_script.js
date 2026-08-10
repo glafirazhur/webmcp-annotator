@@ -65,22 +65,11 @@ function truncate(text, max) {
 }
 
 function isHidden(el) {
+  if (!(el instanceof Element)) return false;
   if (el.hidden) return true;
+  if (el instanceof HTMLInputElement && el.type === 'hidden') return true;
   const s = window.getComputedStyle(el);
-  const hiddenStyle = s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
-  if (hiddenStyle) {
-    if (el instanceof HTMLInputElement && (el.type === 'radio' || el.type === 'checkbox' || el.type === 'hidden') && el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl instanceof Element) {
-        const ls = window.getComputedStyle(lbl);
-        if (ls.display !== 'none' && ls.visibility !== 'hidden' && ls.opacity !== '0') {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-  return false;
+  return s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
 }
 
 function isClickableLink(el) {

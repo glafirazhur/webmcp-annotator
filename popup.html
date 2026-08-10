@@ -1,24 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebMCP Annotator</title>
   <link rel="stylesheet" href="popup.css">
 </head>
+
 <body>
   <h2>WebMCP Annotator</h2>
 
   <div class="field">
     <label for="settings-api-key">Gemini API Key</label>
     <div class="input-row">
-      <input
-        type="password"
-        id="settings-api-key"
-        placeholder="Paste your key…"
-        autocomplete="off"
-        spellcheck="false"
-      >
+      <input type="password" id="settings-api-key" placeholder="Paste your key…" autocomplete="off" spellcheck="false">
       <button id="toggle-key" type="button">Show</button>
     </div>
     <small class="help-text">Stored locally in your browser profile.</small>
@@ -28,7 +24,7 @@
     <label for="settings-model">Model</label>
     <select id="settings-model">
       <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-      <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+      <option value="gemini-3.6-flash">gemini-3.6-flash</option>
       <option value="gemma-4-31b-it">gemma-4-31b-it</option>
     </select>
   </div>
@@ -42,4 +38,5 @@
 
   <script src="popup.js"></script>
 </body>
+
 </html>
