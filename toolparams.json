@@ -1,0 +1,125 @@
+[
+  {
+    "name": "customer-support-form-1",
+    "description": "Send customer request 1",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_name": {
+          "type": "string"
+        },
+        "customer_email": {
+          "type": "string"
+        },
+        "question_type": {
+          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "",
+              "title": "Select a topic..."
+            },
+            {
+              "type": "string",
+              "const": "billing",
+              "title": "Billing & Payments"
+            },
+            {
+              "type": "string",
+              "const": "technical",
+              "title": "Technical Support"
+            },
+            {
+              "type": "string",
+              "const": "account",
+              "title": "Account Access"
+            },
+            {
+              "type": "string",
+              "const": "general",
+              "title": "General Inquiry"
+            }
+          ],
+          "enum": [
+            "",
+            "billing",
+            "technical",
+            "account",
+            "general"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "customer-support-form-3",
+    "description": "Send customer request 3",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "customer-support-form-4",
+    "description": "Send customer request 4",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_name": {
+          "type": "string",
+          "description": "Customer's name"
+        },
+        "customer_email": {
+          "type": "string"
+        },
+        "question_type": {
+          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "",
+              "title": "Select a topic..."
+            },
+            {
+              "type": "string",
+              "const": "billing",
+              "title": "Billing & Payments"
+            },
+            {
+              "type": "string",
+              "const": "technical",
+              "title": "Technical Support"
+            },
+            {
+              "type": "string",
+              "const": "account",
+              "title": "Account Access"
+            },
+            {
+              "type": "string",
+              "const": "general",
+              "title": "General Inquiry"
+            }
+          ],
+          "enum": [
+            "",
+            "billing",
+            "technical",
+            "account",
+            "general"
+          ],
+          "description": "Question Type (associated label)"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  }
+]

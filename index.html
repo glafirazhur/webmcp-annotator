@@ -116,7 +116,7 @@
 
 <header class="page-header">
   <h1>Customer Support Forms</h1>
-  <p>Three visually identical forms with different underlying DOM structures</p>
+  <p>WebMCP toolparamdescription demo</p>
 </header>
 
 <main class="forms-grid">
@@ -206,7 +206,7 @@
     <form toolname="customer-support-form-3" tooldescription="Send customer request 3">
       <div class="field-group">
         <label class="field-label">Customer Name</label>
-        <input aria-description="Question the user can ask" id="f3-customer-name" type="text" class="form-control" placeholder="Jane Doe">
+        <input  aria-description="Customer's name" id="f3-customer-name" type="text" class="form-control" placeholder="Jane Doe">
       </div>
 
       <div class="field-group">
@@ -228,6 +228,43 @@
       <div class="field-group">
         <label class="field-label">Message</label>
         <textarea id="f3-message" class="form-control" placeholder="How can we help you?"></textarea>
+      </div>
+    </form>
+  </section>
+
+  <!-- =====================================================================
+       FORM 4: <form> tag, inputs WITH `name` attribute, associated <label for="...">
+       ===================================================================== -->
+  <section class="card">
+    <span class="card-badge">Form 4 - How toolparamdescription is working</span>
+    <h2>Customer Support</h2>
+    <p class="card-subtitle">&lt;form&gt; tag + label, aria-label, aria-description, nothing (with <code>name</code> attr)</p>
+
+    <form toolname="customer-support-form-4" tooldescription="Send customer request 4">
+      <div class="field-group">
+        <label class="field-label">Customer Name (aria-description)</label>
+        <input name="customer_name" aria-description="Customer's name" id="f4-customer-name" type="text" class="form-control" placeholder="Jane Doe">
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Email Address (aria-label)</label>
+        <input name="customer_email" id="f4-customer-email" aria-label="customer email" type="email" class="form-control" placeholder="jane@example.com">
+      </div>
+
+      <div class="field-group">
+        <label for="f4-question-type" class="field-label">Question Type (associated label)</label>
+        <select name="question_type" id="f4-question-type" class="form-control">
+          <option value="" disabled selected>Select a topic...</option>
+          <option value="billing">Billing &amp; Payments</option>
+          <option value="technical">Technical Support</option>
+          <option value="account">Account Access</option>
+          <option value="general">General Inquiry</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Message (nothing)</label>
+        <textarea name="message" id="f4-message" class="form-control" placeholder="How can we help you?"></textarea>
       </div>
     </form>
   </section>
