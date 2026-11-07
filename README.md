@@ -1,64 +1,63 @@
 # WebMCP Annotator
 
-WebMCP Annotator is a Chrome extension that helps map page elements to WebMCP tool fields using an AI-assisted wrapper workflow.
+**WebMCP Annotator** is a Chrome extension that uses AI vision to turn any interactive section of a webpage—such as a product card, search bar, or filter panel—into an AI-ready **WebMCP tool**, even when the website uses custom visual buttons instead of standard HTML forms.
 
-## What It Does
+---
 
-1. Lets you select a wrapper on the current page.
-2. Captures a screenshot and DOM summary for that wrapper.
-3. Sends both to Gemini for field mapping.
-4. Lets you validate mappings in the in-page widget.
-5. Applies and persists WebMCP attributes on confirmed elements.
+## How It Works
 
-Screenshot capture uses only the currently visible viewport.
-Use Browser Zoom in case you want to capture a bigger area.
+Many modern websites do not use traditional `<form>` tags or standard `<input>` fields. Instead, options like size pickers (`S`, `M`, `L`), color swatches, or custom dropdowns are built purely visually.
 
-## Installation
+WebMCP Annotator solves this by combining **what the page looks like** with **how the page is built**:
 
-1. Open chrome://extensions/
-2. Enable Developer mode.
-3. Click Load unpacked.
-4. Select this repository folder.
-5. Reload the extension after updates.
+1. **You pick a section** of any webpage.
+2. **The extension takes a snapshot**: It captures a screenshot of that visible area along with a lightweight list of elements inside it.
+3. **AI analyzes both together**: Gemini looks at the screenshot and the page structure at the same time to guess which elements are interactive controls and what each one does.
+4. **Automatic tagging & visual preview**: The extension injects standard WebMCP attributes directly onto the page and highlights all discovered controls with a color-coded legend.
 
-## Usage
+---
 
-1. Open the popup and configure:
-1. Google AI Studio API key
-1. Model selection
-2. Open a website page.
-3. Use the in-page widget:
-1. Select a template
-1. Click Pick Target
-1. Click a wrapper on the page
-4. Click Run AI On Selection.
-5. In AI Validation:
-1. Review each field
-1. Accept or adjust selectors
-1. Ensure required fields are valid
-6. Click Apply Validated Markup.
+## Quick Start
 
-Applied attributes include:
-- toolname
-- tooldescription
-- toolparamtitle
-- toolparamdescription
-- toolautosubmit (when enabled)
+### 1. Install the Extension
+1. Open Chrome and go to `chrome://extensions/`.
+2. Turn on **Developer mode** (top-right toggle).
+3. Click **Load unpacked** and select this project folder.
 
-## Persistence
+### 2. Add Your AI Key
+1. Click the **WebMCP Annotator** icon in your Chrome toolbar.
+2. Paste your **Gemini API Key**, choose a model, and click **Save Settings**.
 
-Annotation configs are saved in local extension storage by hostname and auto-applied on revisit.
+### 3. Annotate Any Webpage
+1. Open any webpage and click the **Open WebMCP Annotator** badge in the top-right corner.
+2. Click **Pick wrapper**, then click on a section of the page (for example, a product card or search area).
+   > *Tip: Screenshot capture uses only the visible screen area. Zoom out in your browser (`Ctrl/Cmd` + `-`) if you want to capture a larger block.*
+3. Click **Run AI** and wait a few seconds for the analysis to complete.
+4. Click **Inject Markup** to apply the WebMCP attributes and see the visual highlights on the page.
+5. Use **Hide Elements / Show Elements** to toggle the visual boxes and legend at any time, or **Clear** to start over.
 
-## Project Structure
+---
 
-- popup.css: popup-only styles
-- widget.css: in-page widget-only styles
-- test_page.css: test page-only styles
-- popup.js: popup settings logic
-- content_script.js: in-page widget and annotation runtime
-- background.js: screenshot capture and cropping service worker
-- templates.js: tool template definitions
+## What the Highlights Mean
 
-## Local Test Page
+When you click **Inject Markup**, the extension draws color-coded boxes on the page and opens a draggable **Annotation legend**:
 
-Use test_page.html to test the complete flow with sample product cards and search controls.
+- **Blue (`C` — Container)**: The main wrapper for the tool. Receives:
+  - `toolname` — Name of the action (e.g., `add_to_cart`).
+  - `tooldescription` — Summary of what the tool does.
+  - `toolautosubmit` — Added when changing an option immediately updates the page without clicking a submit button.
+- **Green (`1, 2, …` — Standard Controls)**: Standard form elements (inputs, dropdowns, buttons) that are ready for WebMCP right away. Each receives:
+  - `toolparamdescription` — Plain-language description of what the control sets or changes.
+- **Orange (`P1, P2, …` — Suggested Custom Controls)**: Elements that act like buttons or options visually (such as custom size or color pickers) but are built without standard form inputs. The legend explains why each one was flagged and suggests the `toolparamdescription` it should have.
+
+> **Parameter Identity in the Legend**: For every highlighted control, the legend also displays its HTML tag/type, `name` attribute (or `name: none`), and computed `accessibleName` (or notes when the AI inferred its purpose visually from the UI).
+
+---
+
+## Main Project Files
+
+- `manifest.json` — Chrome Extension (Manifest V3) configuration.
+- `background.js` — Captures/crops the wrapper screenshot and sends the visual + DOM request to the Gemini API.
+- `content_script.js` — Runs the in-page floating widget, element picker, DOM scanner, attribute injector, and visual legend.
+- `widget.css` — Styles for the in-page floating widget and annotation overlays (isolated inside Shadow DOM).
+- `popup.html` / `popup.js` / `popup.css` — Extension toolbar popup for saving your API key and model.

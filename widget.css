@@ -1,8 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 :host {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  contain: layout style paint;
+  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
+  color-scheme: dark;
   --webmcp-annotation-anchor-layer: 2147483620;
-  /* рамки аннотаций */
+  /* annotation boxes */
   --webmcp-picker-layer: 2147483630;
   /* picker overlay */
   --webmcp-picker-label-layer: 2147483631;
@@ -11,16 +18,6 @@
   /* legend */
   --webmcp-widget-layer: 2147483647;
   /* floating widget */
-}
-
-:host {
-  all: initial;
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  contain: layout style paint;
-  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
-  color-scheme: dark;
 }
 
 :host,
@@ -560,24 +557,6 @@ body.webmcp-picking-cursor {
 }
 
 @media (max-width: 520px) {
-  :host {
-    all: initial;
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    contain: layout style paint;
-    font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
-    color-scheme: dark;
-  }
-
-  :host,
-  :host *,
-  :host *::before,
-  :host *::after {
-    box-sizing: border-box;
-  }
-
-
   #webmcp-floating-widget {
     top: 8px;
     right: 8px;
@@ -590,23 +569,6 @@ body.webmcp-picking-cursor {
 }
 
 @media (prefers-contrast: more) {
-  :host {
-    all: initial;
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    contain: layout style paint;
-    font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
-    color-scheme: dark;
-  }
-
-  :host,
-  :host *,
-  :host *::before,
-  :host *::after {
-    box-sizing: border-box;
-  }
-
   #webmcp-floating-widget {
     --webmcp-card-border: rgba(241, 245, 249, 0.62);
     --webmcp-input-focus-border: #bfdbfe;

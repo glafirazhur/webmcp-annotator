@@ -1,8 +1,8 @@
 /**
- * @fileoverview Background service worker — captures and crops a screenshot of the selected wrapper.
+ * @fileoverview Background service worker — captures and crops a screenshot of the selected wrapper
+ * and proxies AI analysis requests to the Gemini API.
  */
 
-// Добавляем обработчик в существующий chrome.runtime.onMessage.addListener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'captureWrapperScreenshot') {
     handleCaptureScreenshot(request, sender)
@@ -11,7 +11,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // Наш новый безопасный шлюз для работы с ИИ
   if (request.action === 'runAiAnalysis') {
     handleAiAnalysis(request)
       .then((result) => sendResponse({ success: true, result }))
@@ -20,19 +19,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Новые функции внутри background.js:
 async function handleAiAnalysis(request) {
   const { screenshot, payload } = request;
 
   const defaults = { settings_model: 'gemini-3.5-flash', settings_api_key: '' };
-  const settings = await new Promise((resolve) => {
-    chrome.storage.local.get(['settings_model', 'settings_api_key'], (result) => {
-      resolve({
-        settings_model: result.settings_model || defaults.settings_model,
-        settings_api_key: result.settings_api_key || defaults.settings_api_key
-      });
-    });
-  });
+  const settings = await chrome.storage.local.get(defaults);
 
   const apiKey = settings.settings_api_key;
   if (!apiKey || !apiKey.trim()) throw new Error('Missing API key in Settings.');
@@ -52,43 +43,48 @@ async function handleAiAnalysis(request) {
         systemInstruction: {
           parts: [{
             text: [
-              'You are an expert DOM and UI analyzer. Your task is to extract elements from a given UI container into a WebMCP Tool specification.',
+              'You are an expert DOM and UI analyzer. Your task is to extract interactive parameters from a given UI container into a WebMCP Tool specification.',
               '',
               'CRITICAL RULES:',
-              '1. STRICT LANGUAGE: Parameter titles, descriptions, and toolnames (toolparamtitle, toolparamdescription, toolname) MUST strictly match the primary language of the provided screenshot/UI. Explanations in the reason field (for possibleCandidates) MUST always be in concise English.',
-              '2. RAW JSON ONLY: Return pure JSON. Do not wrap the output in ```json markdown blocks. No comments, no extra characters.',
+              '1. STRICT LANGUAGE:',
+              '   - "tooldescription" and "toolparamdescription" MUST strictly match the primary language of the provided screenshot/UI.',
+              '   - "toolname" MUST be a valid ASCII lowercase snake_case identifier (e.g. "add_to_cart", "anadir_al_carrito", "search_products"). Transliterate or translate non-Latin scripts into ASCII snake_case.',
+              '   - "reason" (in possibleCandidates) MUST always be in concise English.',
+              '2. RAW JSON ONLY: Return pure JSON matching the response schema. No markdown fences, comments, or extra text.',
               '',
               'ANALYSIS & CATEGORIZATION LOGIC:',
               '',
               '1. VISUAL INSPECTION & OPTION GROUP EXTRACTION (CRITICAL):',
-              '   - Look at the UI screenshot first to identify ALL functional parameters (e.g. Size pickers S/M/L/XL/XXL, Color swatches, Quantity selectors -/+/1, Search inputs, Filter options).',
-              '   - Every individual option choice within a group (e.g. S, M, L, XL, XXL) represents a primary parameter and MUST be individually unpacked into the output arrays. NEVER omit or merge option choices into a single group item.',
+              '   - Inspect the UI screenshot alongside the DOM candidates to identify ALL functional input parameters that configure or feed into the tool action (e.g. Size pickers S/M/L/XL/XXL, Color swatches, Delivery mode options, Quantity selectors -/+/1, Search inputs, Filter controls).',
+              '   - Every individual option choice within a group (e.g. S, M, L, XL, XXL) represents a separate parameter item and MUST be individually unpacked. NEVER merge multiple option choices into a single group wrapper.',
               '',
               '2. CATEGORIZATION RULES FOR THE TWO ARRAYS:',
-              '   a) "elements" (Direct Declarative Interactive Form Elements ONLY):',
-              '      - ONLY native, visible interactive form controls (<input>, <select>, <textarea>, <button>) belong in "elements".',
-              '      - A candidate MUST be a standard form control AND be visibly present in the DOM (hiddenInDom is false, omitted, or undefined).',
-              '      - DO NOT put <label> tags, links (<a>), option group wrappers, or CSS-hidden form controls into "elements".',
+              '   a) "elements" (Direct Declarative Visible Native Form Controls ONLY):',
+              '      - Include ONLY native interactive form controls (<input>, <select>, <textarea>, <button>) that are visibly rendered in the DOM (hiddenInDom is NOT true).',
+              '      - If a visible native <input> (such as a visible radio button or checkbox) exists for an option, put that <input> in "elements" and DO NOT also include its associated <label> in "possibleCandidates".',
+              '      - DO NOT put <label>, <a>, <div>, <span>, option group containers, or hidden inputs (hiddenInDom: true) into "elements".',
               '',
-              '   b) "possibleCandidates" (Custom Pseudo-Controls & Non-Declarative Option Pickers ONLY):',
-              '      - Include ONLY elements that visually or functionally act as interactive parameters or option controls, but LACK visible native form markup:',
-              '        1. Custom interactive pseudo-controls (e.g. custom toggle controls, custom sliders, pseudo-dropdowns, non-form clickable control nodes).',
-              '        2. Custom option pickers where native inputs are hidden in the DOM (hiddenInDom: true) and user interaction relies on visual option elements.',
-              '      - EXCLUSIONS — DO NOT INCLUDE IN possibleCandidates:',
-              '        - Static field labels or text descriptors that simply label an existing form control.',
-              '        - Standard text or navigation links that navigate pages or perform standard hyperlink actions.',
-              '        - Internal technical state or metadata inputs.',
-              '      - For every item in possibleCandidates, provide a short 1-sentence "reason" in English explaining why it is a custom or non-declarative parameter.',
+              '   b) "possibleCandidates" (Visible Custom Controls & Non-Declarative Option Pickers ONLY):',
+              '      - Include ONLY visible elements that functionally act as tool parameters or option choices, but do NOT use a visible native form control:',
+              '        1. Visible <label> or custom option nodes that control a CSS-hidden native input (where the underlying <input> has hiddenInDom: true). Always select the XPath of the VISIBLE interactive element (e.g. the <label> or button-like wrapper), NEVER the XPath of the hiddenInDom: true input.',
+              '        2. Variant/option pickers implemented as links (candidates with optionLike: true or controlType: "link-option", such as color swatches or size links).',
+              '        3. Custom interactive pseudo-controls (e.g. custom div/span toggles, custom sliders, pseudo-dropdowns, role="radio"/role="option"/role="switch" nodes).',
+              '      - EXCLUSIONS — DO NOT INCLUDE IN EITHER ARRAY:',
+              '        - Static field labels or headings that merely describe an already-included visible form control.',
+              '        - Standard navigation or informational links (controlType: "link-action") that are not variant option pickers.',
+              '        - Auxiliary/informational UI triggers that do not set a tool parameter value (e.g. "Size Guide", "Shipping/Delivery Info" popups, product details/reviews accordions, tooltips, share buttons, or wishlist/favorite buttons).',
+              '        - Hidden DOM nodes (hiddenInDom: true) or internal technical state inputs.',
+              '      - For every item in possibleCandidates, provide a concise 1-sentence "reason" in English explaining why it is a custom or non-declarative control.',
               '',
-              '3. SUBMIT / EXECUTION BUTTON RULE:',
-              '   - The primary execution button (e.g. "ADD TO CART", "Submit", "Search") is NOT a parameter and MUST NOT be in elements or possibleCandidates. Use it only to derive container.toolname.',
-              '   - Secondary functional buttons (e.g. quantity "+" / "-" buttons, stepper controls, filter toggles) ARE parameters and MUST be included in elements if visible.',
+              '3. SUBMIT / EXECUTION BUTTON & FORM BOUNDARY RULE:',
+              '   - The primary execution button (e.g. "Add to Cart", "Submit", "Search", "Apply") triggers the tool action: it is NOT an input parameter and MUST NOT be included in "elements" or "possibleCandidates". Use its visible text to derive container.toolname.',
+              '   - Secondary action buttons that adjust input state before submission (e.g. quantity "-" / "+" stepper buttons, clear/filter toggles) ARE parameters and belong in "elements" if they are native <button>/<input> tags.',
+              '   - POST-SUBMIT BOUNDARY: In form or product-purchase layouts where the primary submit button ("Add to Cart", "Buy Now", "Submit") sits at the bottom of the parameter controls, treat that button as the closing boundary of the tool—ignore any auxiliary links, accordions, or actions positioned visually after/below it.',
               '',
-              '4. PARAMETER DETAILS & TITLE/DESCRIPTION RULES:',
-              '   - Provide toolparamtitle and toolparamdescription for EVERY item in BOTH arrays (elements and possibleCandidates).',
-              '   - FUNCTIONAL SPECIFICATION ONLY: Write toolparamtitle and toolparamdescription strictly as if the candidate were a properly coded native control (e.g. toolparamtitle: "XL", toolparamdescription: "Select size XL for the product").',
-              '   - NEVER mention HTML implementation terms (such as "label", "visual label", "div element", "span", "wrapper") inside toolparamtitle or toolparamdescription. Implementation details belong strictly in the reason field.',
-              '   - Unpack option choices into individual parameter items (e.g. size pickers S/M/L/XL/XXL, color swatches), categorizing visible native form inputs under elements and custom/label/hidden option nodes under possibleCandidates.'
+              '4. PARAMETER DESCRIPTION RULES:',
+              '   - Provide a clear "toolparamdescription" for EVERY item in BOTH arrays ("elements" and "possibleCandidates").',
+              '   - FUNCTIONAL SPECIFICATION ONLY: Write toolparamdescription strictly in terms of user intent/function (e.g. "Select size XL for the product", "Increase package quantity by 1").',
+              '   - NEVER mention HTML/DOM implementation terms (such as "label", "visual label", "div", "span", "link", "wrapper") inside toolparamdescription. Put implementation details only in "reason".'
             ].join('\n')
           }]
         },
@@ -151,11 +147,11 @@ function getAiSchema() {
           },
           toolname: {
             type: 'STRING',
-            description: 'Lowercase snake_case name. STRICT PRIORITY: Derive this directly from the exact visible text of the primary submit/execution button (e.g., "add_to_cart"). Only invent a name if no primary button exists.'
+            description: 'ASCII lowercase snake_case identifier derived from the primary submit/execution button text (e.g., "add_to_cart", "anadir_al_carrito"), or a concise functional snake_case name if no submit button exists.'
           },
           tooldescription: {
             type: 'STRING',
-            description: 'Short summary of what the entire tool accomplishes.'
+            description: 'Short summary of what the entire tool accomplishes, in the primary UI language.'
           },
           toolautosubmit: {
             type: 'BOOLEAN',
@@ -166,50 +162,42 @@ function getAiSchema() {
       },
       elements: {
         type: 'ARRAY',
-        description: 'List of direct declarative visible native interactive form controls (<input>, <select>, <textarea>, <button>). Do not include labels, links, hidden inputs, or primary submit buttons.',
+        description: 'Visible native interactive form controls (<input>, <select>, <textarea>, <button>) that set tool parameters. Exclude hidden inputs (hiddenInDom: true), static labels, links, auxiliary triggers (e.g. size guides, wishlists), and the primary submit button.',
         items: {
           type: 'OBJECT',
           properties: {
             xpath: {
               type: 'STRING',
-              description: 'The precise XPath of the actionable node.'
-            },
-            toolparamtitle: {
-              type: 'STRING',
-              description: 'The visible label text in primary UI language.'
+              description: 'The precise XPath of the visible native form control.'
             },
             toolparamdescription: {
               type: 'STRING',
-              description: 'Explanation of what data or state this specific parameter controls in primary UI language.'
+              description: 'Functional explanation of what parameter or state this control sets, in the primary UI language.'
             }
           },
-          required: ['xpath', 'toolparamtitle', 'toolparamdescription']
+          required: ['xpath', 'toolparamdescription']
         }
       },
       possibleCandidates: {
         type: 'ARRAY',
-        description: 'List of custom pseudo-controls or non-declarative option pickers (e.g., custom div/span toggles, custom sliders, pseudo-dropdowns, or CSS-hidden option pickers). DO NOT include standard field labels, text/navigation links, or technical hidden inputs. Provide parameter title, description, and reason in English.',
+        description: 'Visible custom pseudo-controls or non-declarative option pickers (e.g. visible <label> for a hiddenInDom input, optionLike variant links, custom div/span toggles, sliders, or dropdowns). Never include hiddenInDom nodes, static labels for already-included visible inputs, informational/auxiliary triggers (size guides, details, wishlists), or elements after the primary submit button.',
         items: {
           type: 'OBJECT',
           properties: {
             xpath: {
               type: 'STRING',
-              description: 'The precise XPath of the node.'
-            },
-            toolparamtitle: {
-              type: 'STRING',
-              description: 'Functional parameter title as if for a properly coded native control in primary UI language (e.g. "XL", "Pink"). Do not include implementation terms like "label" or "div".'
+              description: 'The precise XPath of the visible interactive candidate node (never a hiddenInDom node).'
             },
             toolparamdescription: {
               type: 'STRING',
-              description: 'Functional parameter description explaining what option/action this parameter controls in primary UI language (e.g. "Select size XL for the product"). Do not include implementation terms like "visual label element".'
+              description: 'Functional parameter description explaining what option/action this parameter controls in the primary UI language (e.g. "Select size XL for the product"). Do not mention HTML tag or implementation terms.'
             },
             reason: {
               type: 'STRING',
-              description: 'A very short explanation (1 concise sentence in English) explaining why this item is a possible candidate rather than a direct declarative element.'
+              description: 'One concise sentence in English explaining why this item is a non-declarative candidate rather than a native form control.'
             }
           },
-          required: ['xpath', 'toolparamtitle', 'toolparamdescription', 'reason']
+          required: ['xpath', 'toolparamdescription', 'reason']
         }
       }
     },
@@ -280,6 +268,11 @@ async function handleCaptureScreenshot(request, sender) {
     throw new Error('Wrapper is offscreen or has zero visible area after clipping.');
   }
 
+  if (safeW < 10 || safeH < 10) {
+    imageBitmap.close();
+    throw new Error('Cropped screenshot is unexpectedly tiny. Try selecting a larger wrapper.');
+  }
+
   const scaled = getScaledDimensions(safeW, safeH);
   const canvas = new OffscreenCanvas(scaled.width, scaled.height);
   const ctx = canvas.getContext('2d');
@@ -288,10 +281,6 @@ async function handleCaptureScreenshot(request, sender) {
 
   const encoded = await convertCanvasToOptimizedBlob(canvas);
   const base64 = await blobToBase64(encoded.blob);
-
-  if (safeW < 10 || safeH < 10) {
-    throw new Error('Cropped screenshot is unexpectedly tiny. Try selecting a larger wrapper.');
-  }
 
   return {
     action: 'wrapperScreenshotReady',

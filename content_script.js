@@ -136,22 +136,55 @@ function resolveInteractiveTarget(el) {
   return null;
 }
 
+function getAccessibleName(el) {
+  if (!(el instanceof Element)) return '';
+
+  if (typeof el.computedName === 'string' && el.computedName.trim()) {
+    return truncate(el.computedName, 80);
+  }
+
+  const labelledBy = el.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const parts = labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent || '')
+      .map(collapseWS)
+      .filter(Boolean);
+    if (parts.length) return truncate(parts.join(' '), 80);
+  }
+
+  const ariaLabel = collapseWS(el.getAttribute('aria-label') || '');
+  if (ariaLabel) return truncate(ariaLabel, 80);
+
+  if (el.id) {
+    const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    const text = collapseWS(lbl?.textContent || '');
+    if (text) return truncate(text, 80);
+  }
+
+  const parentLabel = el.closest('label');
+  if (parentLabel) {
+    const text = collapseWS(parentLabel.textContent || '');
+    if (text) return truncate(text, 80);
+  }
+
+  const placeholder = collapseWS(el.getAttribute('placeholder') || '');
+  if (placeholder) return truncate(placeholder, 80);
+
+  const title = collapseWS(el.getAttribute('title') || '');
+  if (title) return truncate(title, 80);
+
+  if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'LABEL' || el.hasAttribute('role')) {
+    const text = collapseWS(el.innerText || el.textContent || '');
+    if (text) return truncate(text, 80);
+  }
+
+  return '';
+}
+
 function getLabels(control) {
-  const out = [];
-  if (control.id) {
-    const lbl = document.querySelector(`label[for="${CSS.escape(control.id)}"]`);
-    if (lbl) out.push(truncate(lbl.textContent, 80));
-  }
-  const parent = control.closest('label');
-  if (parent) {
-    const t = truncate(parent.textContent, 80);
-    if (t && !out.includes(t)) out.push(t);
-  }
-
-  const attrLabel = getExplicitLabel(control);
-  if (attrLabel) out.push(truncate(attrLabel, 80));
-
-  return out;
+  const acc = getAccessibleName(control);
+  return acc ? [acc] : [];
 }
 
 function hasOptionState(el) {
@@ -319,6 +352,14 @@ function buildCandidate(el, kind) {
   if (targetEl.getAttribute('type')) node.type = targetEl.getAttribute('type');
   if (isHidden(targetEl)) node.hiddenInDom = true;
 
+  if (kind === 'control') {
+    const nameAttr = collapseWS(targetEl.getAttribute('name') || '');
+    if (nameAttr) node.name = nameAttr;
+
+    const accessibleName = getAccessibleName(targetEl);
+    if (accessibleName) node.accessibleName = accessibleName;
+  }
+
   const labels = kind === 'control' ? getLabels(targetEl) : [];
   const rawText = kind === 'control'
     ? truncate(targetEl.innerText || targetEl.value || '', 120)
@@ -468,10 +509,29 @@ function normalizeAiResultTargets(result) {
     }
   }
 
-  return {
+  const draftResult = {
     ...result,
     elements: normalizedElements,
     possibleCandidates: normalizedPossible
+  };
+
+  const toolHost = resolveWebMcpToolHost(draftResult);
+  const resolvedContainerXPath = toolHost instanceof Element ? getXPath(toolHost) : result.container.xpath;
+
+  const isInsideHost = (item) => {
+    if (!(toolHost instanceof Element)) return true;
+    const el = getElementByXPath(item?.xpath);
+    return Boolean(el instanceof Element && toolHost.contains(el));
+  };
+
+  return {
+    ...draftResult,
+    container: {
+      ...result.container,
+      xpath: resolvedContainerXPath
+    },
+    elements: normalizedElements.filter(isInsideHost),
+    possibleCandidates: normalizedPossible.filter(isInsideHost)
   };
 }
 
@@ -489,7 +549,7 @@ async function callAi({ screenshot, payload }) {
           return;
         }
         try {
-          // Возвращаем результат, прогнав его через DOM-зависимый нормализатор
+          // Normalize AI result targets against the live DOM
           const normalized = normalizeAiResultTargets(response.result);
           resolve(normalized);
         } catch (err) {
@@ -557,12 +617,8 @@ let annotationVisible = false;
 let annotationLayer = null;
 let annotationLegend = null;
 let annotationLegendList = null;
-let annotationLegendFooter = null;
-let annotationLegendHeader = null;
-let annotationLegendDragHint = null;
 let annotationLegendDragState = null;
 let annotationNodes = [];
-let _anchorSeq = 0;
 let annotationLegendResizeHandlerInstalled = false;
 let annotationSyncRaf = 0;
 let annotationViewportSyncInstalled = false;
@@ -571,7 +627,6 @@ let annotationViewportSyncInstalled = false;
 
 let markupInjected = false;
 let activeSession = null;
-let reapplyScheduled = false;
 let reapplyTimer = null;
 let lastKnownUrl = location.href;
 let navigationWatchersInstalled = false;
@@ -582,9 +637,10 @@ const WEBMCP_ATTRS = {
   toolName: 'toolname',
   toolDescription: 'tooldescription',
   toolAutoSubmit: 'toolautosubmit',
-  paramTitle: 'toolparamtitle',
   paramDescription: 'toolparamdescription'
 };
+
+const LEGACY_WEBMCP_ATTRS = ['toolparamtitle'];
 
 function setWebMcpAttribute(el, name, value) {
   if (!(el instanceof Element) || !name) return;
@@ -594,17 +650,47 @@ function setWebMcpAttribute(el, name, value) {
 }
 
 function clearWebMcpAttributes(root = document) {
-  const selector = Object.values(WEBMCP_ATTRS).map((a) => `[${a}]`).join(',');
+  const allAttrs = [...Object.values(WEBMCP_ATTRS), ...LEGACY_WEBMCP_ATTRS];
+  const selector = allAttrs.map((a) => `[${a}]`).join(',');
   for (const el of root.querySelectorAll(selector)) {
-    Object.values(WEBMCP_ATTRS).forEach((a) => el.removeAttribute(a));
+    allAttrs.forEach((a) => el.removeAttribute(a));
   }
 }
 
-function getElementMeta(el) {
+function getElementMeta(el, includeParamIdentity = false) {
   if (!(el instanceof Element)) return '';
   const tag = el.tagName.toLowerCase();
   const type = el.getAttribute('type');
-  return type ? `${tag}[type="${type}"]` : tag;
+  const baseTag = type ? `${tag}[type="${type}"]` : tag;
+
+  if (!includeParamIdentity) return baseTag;
+
+  const nameAttr = collapseWS(el.getAttribute('name') || '');
+  const accessibleName = getAccessibleName(el);
+
+  const namePart = nameAttr ? `name="${nameAttr}"` : 'name: none';
+  const accPart = accessibleName
+    ? `accessibleName="${truncate(accessibleName, 40)}"`
+    : 'accessibleName: none (inferred from UI)';
+
+  return `${baseTag} • ${namePart} • ${accPart}`;
+}
+
+function getDisplayLabelForElement(el, fallback) {
+  if (el instanceof Element) {
+    const accessibleName = getAccessibleName(el);
+    if (accessibleName) return truncate(accessibleName, 50);
+    const nameAttr = collapseWS(el.getAttribute('name') || '');
+    if (nameAttr) return truncate(nameAttr, 50);
+    const ownText = collapseWS(
+      (el instanceof HTMLInputElement ? el.value : '') ||
+      el.innerText ||
+      el.textContent ||
+      ''
+    );
+    if (ownText) return truncate(ownText, 50);
+  }
+  return fallback;
 }
 
 function normalizeToolName(value) {
@@ -622,36 +708,27 @@ function normalizeToolName(value) {
   return name.slice(0, 128);
 }
 
-function makeParamKey(item, el, index) {
-  const fromName = collapseWS(el?.getAttribute?.('name') || '');
-  if (fromName) {
-    return fromName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w.-]/g, '').slice(0, 128);
-  }
-  const fromTitle = collapseWS(item?.toolparamtitle || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^\w.-]/g, '')
-    .slice(0, 128);
-
-  return fromTitle || `param_${index + 1}`;
-}
-
 function resolveWebMcpToolHost(result) {
   const originalWrapper =
     selectedWrapperEl instanceof Element
       ? selectedWrapperEl
-      : getElementByXPath(selectedWrapperXPath);
+      : getElementByXPath(selectedWrapperXPath || result?.container?.xpath);
 
   if (!(originalWrapper instanceof Element)) return null;
 
-  const domElements = (result?.elements || [])
+  const domElements = [
+    ...(result?.elements || []),
+    ...(result?.possibleCandidates || [])
+  ]
     .map((item) => getElementByXPath(item?.xpath))
     .map((el) => resolveInteractiveTarget(el) || el)
     .filter((el) => el instanceof Element && originalWrapper.contains(el));
 
   if (domElements.length === 0) {
+    return originalWrapper;
+  }
+
+  if (originalWrapper.tagName === 'FORM') {
     return originalWrapper;
   }
 
@@ -673,9 +750,14 @@ function resolveWebMcpToolHost(result) {
     return originalWrapper;
   }
 
+  const closestForm = lca.closest('form');
+  if (closestForm && originalWrapper.contains(closestForm)) {
+    return closestForm;
+  }
+
   let best = lca;
   while (best && best !== originalWrapper) {
-    if (best.tagName === 'DIV') {
+    if (best.tagName === 'FORM' || best.tagName === 'DIV') {
       return best;
     }
     best = best.parentElement;
@@ -697,7 +779,11 @@ function applyToolMetadata(host, result, normalizedToolName) {
 
   setWebMcpAttribute(host, WEBMCP_ATTRS.toolName, normalizedToolName);
   setWebMcpAttribute(host, WEBMCP_ATTRS.toolDescription, result?.container?.tooldescription || '');
-  setWebMcpAttribute(host, WEBMCP_ATTRS.toolAutoSubmit, "true");
+  if (result?.container?.toolautosubmit) {
+    setWebMcpAttribute(host, WEBMCP_ATTRS.toolAutoSubmit, 'true');
+  } else {
+    host.removeAttribute(WEBMCP_ATTRS.toolAutoSubmit);
+  }
 
   return true;
 }
@@ -832,9 +918,6 @@ function ensureAnnotationLegend() {
 
   annotationLegend.style.pointerEvents = 'auto';
 
-  annotationLegendHeader = header;
-  annotationLegendDragHint = dragHint;
-
   let annotationLegendDragRaf = 0;
 
   function flushAnnotationLegendDrag() {
@@ -925,14 +1008,9 @@ function destroyAnnotationUI() {
     annotationSyncRaf = 0;
   }
 
-  annotationLegendHeader = null;
-  annotationLegendDragHint = null;
   annotationLegendDragState = null;
 
   annotationNodes.forEach((item) => {
-    if (item?.targetEl instanceof Element && item._anchorId) {
-      item.targetEl.style.anchorName = '';
-    }
     item?.box?.remove();
   });
   annotationNodes = [];
@@ -1037,7 +1115,7 @@ function buildLegendItem(index, tone, title, el, attrLines) {
     index,
     tone,
     title: collapseWS(title || String(index)),
-    node: getElementMeta(el),
+    node: getElementMeta(el, tone !== 'container'),
     lines: attrLines
   };
 }
@@ -1112,7 +1190,6 @@ function injectMarkupFromResult(result) {
     if (!(el instanceof Element)) continue;
     if (!isActuallyInteractiveElement(el)) continue;
 
-    setWebMcpAttribute(el, WEBMCP_ATTRS.paramTitle, item.toolparamtitle);
     setWebMcpAttribute(el, WEBMCP_ATTRS.paramDescription, item.toolparamdescription);
 
     const rect = el.getBoundingClientRect();
@@ -1196,10 +1273,9 @@ function buildLegendItemsFromResult(result) {
       buildLegendItem(
         String(visibleCount),
         'element',
-        item.toolparamtitle || `Element ${visibleCount}`,
+        getDisplayLabelForElement(el, `Element ${visibleCount}`),
         el,
         [
-          `${WEBMCP_ATTRS.paramTitle}="${collapseWS(item.toolparamtitle || '')}"`,
           `${WEBMCP_ATTRS.paramDescription}="${collapseWS(item.toolparamdescription || '')}"`
         ]
       )
@@ -1230,11 +1306,10 @@ function buildLegendItemsFromResult(result) {
       buildLegendItem(
         badgeLabel,
         'possible',
-        `${item.toolparamtitle || `Candidate ${possibleCount}`} (Suggested)`,
+        `${getDisplayLabelForElement(el, `Candidate ${possibleCount}`)} (Suggested)`,
         el,
         [
           collapseWS(item.reason || 'Possible candidate — Non-declarative control'),
-          `${WEBMCP_ATTRS.paramTitle}="${collapseWS(item.toolparamtitle || '')}"`,
           `${WEBMCP_ATTRS.paramDescription}="${collapseWS(item.toolparamdescription || '')}"`
         ]
       )
@@ -1334,7 +1409,6 @@ async function tryRestoreInjectedSession(reason = 'unknown') {
     clearTimeout(reapplyTimer);
     reapplyTimer = null;
   }
-  reapplyScheduled = false;
 
   const targetsMissing = sessionTargetsMissing(result);
 
@@ -1381,10 +1455,8 @@ function scheduleSessionReapply(reason = 'unknown', delay = 120) {
   if (!activeSession?.result) return;
   if (reapplyTimer) clearTimeout(reapplyTimer);
 
-  reapplyScheduled = true;
   reapplyTimer = setTimeout(async () => {
     reapplyTimer = null;
-    reapplyScheduled = false;
     await tryRestoreInjectedSession(reason);
   }, delay);
 }
@@ -1870,12 +1942,8 @@ async function runAiAnalysis() {
   setResultText('');
   updateActionButtons();
 
-  const modelLabel = await new Promise((resolve) => {
-    chrome.storage.local.get(['settings_model'], (result) => {
-      const raw = String(result.settings_model || 'gemini-3.5-flash');
-      resolve(raw.replace(/^models\//, '').trim());
-    });
-  });
+  const stored = await chrome.storage.local.get({ settings_model: 'gemini-3.5-flash' });
+  const modelLabel = String(stored.settings_model || 'gemini-3.5-flash').replace(/^models\//, '').trim();
   showStatusLine(`Running AI with ${modelLabel}…`);
 
   try {
@@ -2322,7 +2390,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return true;
         }
 
-        widget.classList.toggle('webmcp-hidden');
+        if (widgetCollapsed) {
+          widgetLauncher?.click();
+        } else {
+          widgetCollapseBtn?.click();
+        }
 
         sendResponse({ success: true });
         return true;
