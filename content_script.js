@@ -47,14 +47,6 @@ const TEXT_TAGS = new Set([
   'LI', 'DT', 'DD', 'SUMMARY', 'FIGCAPTION', 'BLOCKQUOTE', 'STRONG', 'EM', 'A'
 ]);
 
-function getExplicitLabel(el) {
-  if (!(el instanceof Element)) return '';
-  return el.getAttribute('aria-label') ||
-    el.getAttribute('title') ||
-    el.getAttribute('placeholder') ||
-    '';
-}
-
 function collapseWS(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
@@ -86,14 +78,14 @@ function isCustomControl(el) {
     Number(tabindex) >= 0 &&
     (el.hasAttribute('onclick') || el.hasAttribute('aria-pressed') || el.hasAttribute('aria-expanded'))
   ) return true;
-  if (el.tagName === 'LABEL' && (el.hasAttribute('for') || el.closest('fieldset, [class*="option"], [class*="variant"], [class*="swatch"], [class*="selector"]'))) return true;
-  return false;
+  return (
+    el.tagName === 'LABEL' &&
+    Boolean(el.hasAttribute('for') || el.closest('fieldset, [class*="option"], [class*="variant"], [class*="swatch"], [class*="selector"]'))
+  );
 }
 
 function isNativeInteractiveElement(el) {
-  if (!(el instanceof Element)) return false;
-  const tag = el.tagName;
-  return tag === 'BUTTON' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+  return el instanceof Element && CONTROL_TAGS.has(el.tagName);
 }
 
 function isActuallyInteractiveElement(el) {
@@ -182,11 +174,6 @@ function getAccessibleName(el) {
   return '';
 }
 
-function getLabels(control) {
-  const acc = getAccessibleName(control);
-  return acc ? [acc] : [];
-}
-
 function hasOptionState(el) {
   if (!(el instanceof Element)) return false;
   const cls = `${el.className || ''}`.toLowerCase();
@@ -259,9 +246,7 @@ function inferGroupLabel(el) {
 
 function isShortOptionText(text) {
   const s = collapseWS(text);
-  if (!s) return false;
-  if (s.length > 60) return false;
-  return true;
+  return Boolean(s) && s.length <= 60;
 }
 
 function isOptionLikeLink(el) {
@@ -280,11 +265,7 @@ function isOptionLikeLink(el) {
   const withinOptionishContainer = Boolean(parentLi || group);
   const looksLikeVariantValue = isShortOptionText(text);
 
-  if (optionRole) return true;
-  if (stateful && withinOptionishContainer) return true;
-  if (withinOptionishContainer && siblingCount >= 2 && looksLikeVariantValue) return true;
-
-  return false;
+  return optionRole || (withinOptionishContainer && (stateful || (siblingCount >= 2 && looksLikeVariantValue)));
 }
 
 function getOptionLikeMeta(el) {
@@ -294,10 +275,9 @@ function getOptionLikeMeta(el) {
   const parentLi = target.closest('li');
   const group = getOptionGroupContainer(target);
 
-  const labels = getLabels(target);
+  const accessibleName = getAccessibleName(target);
   const ownText = collapseWS(
-    labels[0] ||
-    getExplicitLabel(target) ||
+    accessibleName ||
     (target instanceof HTMLInputElement ? target.value : '') ||
     target.innerText ||
     target.textContent ||
@@ -332,7 +312,7 @@ function getOptionLikeMeta(el) {
 function isCandidateControl(el) {
   if (!(el instanceof Element)) return false;
   const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA') return true;
+  if (CONTROL_TAGS.has(tag)) return true;
   if (tag === 'A') return Boolean(el.getAttribute('href')) || el.hasAttribute('role') || isOptionLikeLink(el);
   if (tag === 'LABEL') return true;
   return isCustomControl(el);
@@ -352,25 +332,21 @@ function buildCandidate(el, kind) {
   if (targetEl.getAttribute('type')) node.type = targetEl.getAttribute('type');
   if (isHidden(targetEl)) node.hiddenInDom = true;
 
+  const accessibleName = kind === 'control' ? getAccessibleName(targetEl) : '';
   if (kind === 'control') {
     const nameAttr = collapseWS(targetEl.getAttribute('name') || '');
     if (nameAttr) node.name = nameAttr;
-
-    const accessibleName = getAccessibleName(targetEl);
     if (accessibleName) node.accessibleName = accessibleName;
   }
 
-  const labels = kind === 'control' ? getLabels(targetEl) : [];
   const rawText = kind === 'control'
     ? truncate(targetEl.innerText || targetEl.value || '', 120)
     : truncate(targetEl.innerText || targetEl.textContent || '', 200);
 
-  const labelText = labels[0] || getExplicitLabel(targetEl);
-
   const merged = collapseWS(
-    rawText && labelText && rawText.toLowerCase() !== labelText.toLowerCase()
-      ? `${rawText} — ${labelText}`
-      : (rawText || labelText || '')
+    rawText && accessibleName && rawText.toLowerCase() !== accessibleName.toLowerCase()
+      ? `${rawText} — ${accessibleName}`
+      : (rawText || accessibleName || '')
   );
 
   if (merged) node.content = merged.length > 140 ? merged.slice(0, 140) : merged;
@@ -426,9 +402,7 @@ function buildDomSummary(wrapperEl) {
 
   function shouldKeepTextBlock(el) {
     if (!(el instanceof Element)) return false;
-    if (el.tagName === 'LI' && containsOptionLikeLink(el)) return false;
-    if ((el.tagName === 'UL' || el.tagName === 'OL') && containsOptionLikeLink(el)) return false;
-    return true;
+    return !((el.tagName === 'LI' || el.tagName === 'UL' || el.tagName === 'OL') && containsOptionLikeLink(el));
   }
 
   function walk(el) {
@@ -1400,7 +1374,7 @@ async function toggleAnnotations() {
   showStatusLine('Annotations shown. Markup remains injected.');
 }
 
-async function tryRestoreInjectedSession(reason = 'unknown') {
+async function tryRestoreInjectedSession() {
   const result = activeSession?.result;
   if (!result?.container?.xpath) return false;
   if (pickerActive || aiRunning || captureRunning) return false;
@@ -1451,13 +1425,13 @@ async function tryRestoreInjectedSession(reason = 'unknown') {
 
 // ─── Reapply after reload / SPA navigation ───────────────────────────────────
 
-function scheduleSessionReapply(reason = 'unknown', delay = 120) {
+function scheduleSessionReapply(delay = 120) {
   if (!activeSession?.result) return;
   if (reapplyTimer) clearTimeout(reapplyTimer);
 
   reapplyTimer = setTimeout(async () => {
     reapplyTimer = null;
-    await tryRestoreInjectedSession(reason);
+    await tryRestoreInjectedSession();
   }, delay);
 }
 
@@ -1528,7 +1502,7 @@ function installNavigationWatchers() {
   const notifyUrlChange = () => {
     if (location.href === lastKnownUrl) return;
     lastKnownUrl = location.href;
-    scheduleSessionReapply('url-change', 180);
+    scheduleSessionReapply(180);
   };
 
   window.addEventListener('popstate', notifyUrlChange, true);
@@ -1538,15 +1512,13 @@ function installNavigationWatchers() {
   const rawReplaceState = history.replaceState;
 
   history.pushState = function (...args) {
-    const ret = rawPushState.apply(this, args);
+    rawPushState.apply(this, args);
     notifyUrlChange();
-    return ret;
   };
 
   history.replaceState = function (...args) {
-    const ret = rawReplaceState.apply(this, args);
+    rawReplaceState.apply(this, args);
     notifyUrlChange();
-    return ret;
   };
 
   const observer = new MutationObserver((mutations) => {
@@ -1567,7 +1539,7 @@ function installNavigationWatchers() {
     if (!hasRelevantMutation) return;
     if (!sessionTargetsMissing(activeSession.result)) return;
 
-    scheduleSessionReapply('dom-mutation', 220);
+    scheduleSessionReapply(220);
   });
 
   observer.observe(document.documentElement || document, {
@@ -2345,64 +2317,3 @@ function initEmbeddedWidget() {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 initEmbeddedWidget();
-
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  switch (request.action) {
-    case 'startWrapperPicker':
-      startPicker();
-      sendResponse({ success: true });
-      break;
-
-    case 'cancelWrapperPicker':
-      stopPicker();
-      updateActionButtons();
-      sendResponse({ success: true });
-      break;
-
-    case 'runWrapperAiAnalysis':
-      runAiAnalysis()
-        .then(() => sendResponse({ success: true }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
-      return true;
-
-    case 'previewWrapperAnnotations':
-      toggleAnnotations()
-        .then(() => sendResponse({ success: true }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
-      return true;
-
-    case 'clearWrapperAnnotations':
-      resetWidgetState()
-        .then(() => sendResponse({ success: true }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
-      return true;
-
-    default:
-      if (request.type === 'TOGGLE_WIDGET') {
-        if (!IS_TOP_WINDOW) {
-          sendResponse({ success: false });
-          return true;
-        }
-
-        const widget = ensureWidget();
-        if (!widget) {
-          sendResponse({ success: false });
-          return true;
-        }
-
-        if (widgetCollapsed) {
-          widgetLauncher?.click();
-        } else {
-          widgetCollapseBtn?.click();
-        }
-
-        sendResponse({ success: true });
-        return true;
-      }
-
-      sendResponse({ success: false, error: `Unknown action: ${request.action}` });
-      break;
-  }
-
-  return true;
-});

@@ -10,7 +10,7 @@ const statusBox = document.getElementById('status');
 const statusText = statusBox?.querySelector('.status-text');
 const statusCloseBtn = document.getElementById('status-close');
 
-const SUPPORTED_MODELS = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemma-4-31b-it'];
+const SUPPORTED_MODELS = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemma-4-31B-it'];
 
 function clearStatus() {
   if (!statusBox) return;
